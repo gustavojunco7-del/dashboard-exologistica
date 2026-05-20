@@ -20,7 +20,6 @@ button{cursor:pointer;font-family:inherit}
 .mod-tab.mpick.active{color:var(--tm);border-bottom-color:var(--tm)}
 .mod-tab.mcam.active{color:var(--cam);border-bottom-color:var(--cam)}
 .mod-tab.mhk.active{color:var(--hk);border-bottom-color:var(--hk)}
-.mod-tab.ming.active{color:#a78bfa;border-bottom-color:#a78bfa}
 .btn{padding:7px 15px;border-radius:7px;border:none;font-size:12px;font-weight:600;transition:.15s}
 .btn-p{background:var(--accent);color:#fff}.btn-p:hover{background:#2563eb}
 .btn-g{background:var(--green);color:#fff}.btn-g:hover{background:#16a34a}
@@ -133,7 +132,6 @@ input[type=file]{display:none}
   <div class="mod-tab mpick active" id="mtab-pick" onclick="switchModule('pick')">📦 Pickers</div>
   <div class="mod-tab mcam" id="mtab-cam" onclick="switchModule('cam')">🏭 Producción Cámara</div>
   <div class="mod-tab mhk" id="mtab-hk" onclick="switchModule('hk')">🏠 Housekeeping</div>
-  <div class="mod-tab ming" id="mtab-ing" onclick="switchModule('ing')">📥 Ingresos</div>
 </div>
 
 <div class="layout">
@@ -249,7 +247,7 @@ function setSy(on,st){
 
 // ══ STATE ════════════════════════════════════════════════════════════════════
 var MOD='pick',PAGE='resumen',SEL=null,DEL=null,CUR=curMK(),CFG=lCfg();
-var DB={pick:{},cam:{},hk:{},ing:{}};
+var DB={pick:{},cam:{},hk:{}};
 var APP_PASS='nike2025';
 var HK_ZONES=['Pasillo 700','Pasillo 800','Mezzanine N1','Mezzanine N2','Mezzanine N3'];
 var BKSL={TM:[{h:9,m:0,d:30},{h:12,m:0,d:60}],TT:[{h:18,m:0,d:30},{h:20,m:0,d:60}],TN:[{h:2,m:0,d:30},{h:4,m:0,d:60}]};
@@ -264,15 +262,13 @@ function HKT(){return+(CFG.hk_target||0.95);}
 // ══ MODULE SWITCH ════════════════════════════════════════════════════════════
 function switchModule(mod){
   MOD=mod;PAGE='resumen';SEL=null;
-  ['pick','cam','hk','ing'].forEach(function(m){var el=document.getElementById('mtab-'+m);if(el)el.classList.toggle('active',m===mod);});
-  var labels={pick:'+ Cargar día',cam:'+ Cargar producción',hk:'+ Cargar auditoría',ing:'+ Cargar Excel'};
-  document.getElementById('btnLoad').textContent=labels[mod]||'+ Cargar';
+  ['pick','cam','hk'].forEach(function(m){document.getElementById('mtab-'+m).classList.toggle('active',m===mod);});
+  var labels={pick:'+ Cargar día',cam:'+ Cargar producción',hk:'+ Cargar auditoría'};
+  document.getElementById('btnLoad').textContent=labels[mod];
   updNav();
-  if(MOD==='ing'){render();return;}
   ldr(1,'Cargando...');
   updMS().then(function(){
-    if(MOD==='ing'){render();ldr(0);return;}
-    sbGet(MOD,CUR).then(function(data){
+      sbGet(MOD,CUR).then(function(data){
       DB[MOD]=data;
       if(MOD==='cam'){
         try{var lsOut=localStorage.getItem('cam_out_'+CUR);if(lsOut)window.CAM_OUT=+lsOut;}catch(e){}
@@ -441,7 +437,7 @@ function buildHKResult(entries){
 }
 
 // ══ LOAD FLOWS ═══════════════════════════════════════════════════════════════
-function doLoad(){checkPass(function(){if(MOD==='pick')showPickUpload();else if(MOD==='cam')showCamLoad();else if(MOD==='hk')showHKLoad();else if(MOD==='ing')showIngresosLoad();});}
+function doLoad(){checkPass(function(){if(MOD==='pick')showPickUpload();else if(MOD==='cam')showCamLoad();else showHKLoad();});}
 function checkPass(action){var p=prompt('Contraseña:');if(p===APP_PASS)action();else if(p!==null)toast('Contraseña incorrecta','err');}
 
 function showPickUpload(){
@@ -704,7 +700,6 @@ function render(){
   updateSB();
   document.getElementById('btnExport').style.display=Object.keys(DB[MOD]).length?'inline-block':'none';
   if(PAGE==='config'){renderConfig();return;}
-  if(MOD==='ing'){if(PAGE==='resumen')renderIngresosResumen();else renderIngresosDias();return;}
   var days=Object.keys(DB[MOD]).sort();
   if(!days.length){
     var labels={pick:'Cargá el primer día con + Cargar día',cam:'Pegá el mail de producción con + Cargar producción',hk:'Cargá la primera auditoría con + Cargar auditoría'};
@@ -1336,7 +1331,7 @@ function mkTable(title,thead,tbody){
 }
 function goPage(p){PAGE=p;SEL=null;updNav();render();}
 function updNav(){
-  var pages={pick:['resumen','ranking','dias','config'],cam:['resumen','dias','config'],hk:['resumen','dias','config'],ing:['resumen','dias']};
+  var pages={pick:['resumen','ranking','dias','config'],cam:['resumen','dias','config'],hk:['resumen','dias','config']};
   ['resumen','ranking','dias','config'].forEach(function(p){
     var el=document.getElementById('nav-'+p);if(!el)return;
     el.style.display=(pages[MOD]||[]).indexOf(p)>=0?'flex':'none';
@@ -1344,7 +1339,6 @@ function updNav(){
   });
 }
 function updateSB(){
-  if(MOD==='ing'){document.getElementById('sidebarDays').innerHTML='<span>Módulo Ingresos</span>';return;}
   var days=Object.keys(DB[MOD]).sort().reverse().slice(0,10);
   document.getElementById('sidebarDays').innerHTML=days.map(function(dk){var fp=dk.split('-');
     return '<div style="cursor:pointer;padding:2px 0" onclick="viewDay(\''+dk+'\')"> '+(+fp[2])+'/'+fp[1]+'/'+fp[0]+'</div>';
