@@ -268,6 +268,7 @@ function switchModule(mod){
   var labels={pick:'+ Cargar día',cam:'+ Cargar producción',hk:'+ Cargar auditoría',ing:'+ Cargar Excel'};
   document.getElementById('btnLoad').textContent=labels[mod]||'+ Cargar';
   updNav();
+  if(MOD==='ing'){render();return;}
   ldr(1,'Cargando...');
   updMS().then(function(){
     if(MOD==='ing'){render();ldr(0);return;}
@@ -1568,39 +1569,35 @@ window.ING_FILTERS={mes:new Date().getMonth()+1,origen:'TODOS',estado:'TODOS',gp
 
 // ── Render Resumen ────────────────────────────────────────────────────────────
 async function renderIngresosResumen(){
+  // Always show something immediately - never hang
   if(window.ING_DATA&&window.ING_DATA.length){
     buildIngresosView();
     return;
   }
+  // Show empty state right away
   document.getElementById('main').innerHTML=
     '<div class="upload-area"><div style="text-align:center">'+
     '<div style="font-size:44px;margin-bottom:14px">📥</div>'+
-    '<div style="font-size:15px;font-weight:700;margin-bottom:8px">Cargando...</div>'+
+    '<div style="font-size:15px;font-weight:700;margin-bottom:8px">Sin datos de Ingresos</div>'+
+    '<div style="color:var(--muted2);font-size:12px;margin-bottom:18px">Subí el archivo INGRESOS_2026_TOTAL.xlsx con + Cargar Excel</div>'+
+    '<button class="btn btn-p" onclick="doLoad()">+ Cargar Excel</button>'+
     '</div></div>';
+  // Try to load from Supabase in background (no blocking)
   try{
-    var all=await sbGetIngresos({});
-    window.ING_DATA=all||[];
-    if(!all||!all.length){
-      document.getElementById('main').innerHTML=
-        '<div class="upload-area"><div style="text-align:center">'+
-        '<div style="font-size:44px;margin-bottom:14px">📥</div>'+
-        '<div style="font-size:15px;font-weight:700;margin-bottom:8px">Sin datos de Ingresos</div>'+
-        '<div style="color:var(--muted2);font-size:12px;margin-bottom:18px">Subí el archivo INGRESOS_2026_TOTAL.xlsx con + Cargar Excel</div>'+
-        '<button class="btn btn-p" onclick="doLoad()">+ Cargar Excel</button>'+
-        '</div></div>';
-      return;
+    var controller=new AbortController();
+    setTimeout(function(){controller.abort();},5000);
+    var r=await fetch(SB_URL+'/rest/v1/ingresos_data?select=*&order=fecha_llegada.desc&limit=5000',
+      {headers:SBH,signal:controller.signal});
+    if(r.ok){
+      var data=await r.json();
+      if(data&&data.length){
+        window.ING_DATA=data;
+        buildIngresosView();
+      }
     }
-    buildIngresosView();
-  }catch(e){
-    document.getElementById('main').innerHTML=
-      '<div class="upload-area"><div style="text-align:center">'+
-      '<div style="font-size:44px;margin-bottom:14px">📥</div>'+
-      '<div style="font-size:15px;font-weight:700;margin-bottom:8px">Sin datos de Ingresos</div>'+
-      '<div style="color:var(--muted2);font-size:12px;margin-bottom:18px">Subí el archivo INGRESOS_2026_TOTAL.xlsx con + Cargar Excel</div>'+
-      '<button class="btn btn-p" onclick="doLoad()">+ Cargar Excel</button>'+
-      '</div></div>';
-  }
+  }catch(e){/* timeout or error - empty state already shown */}
 }
+
 
 function buildIngresosView(){
   var all=window.ING_DATA||[];
