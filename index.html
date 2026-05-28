@@ -2608,6 +2608,7 @@ async function renderCalPerf(){
 }
 
 
+function ingVolverResumen(){PAGE='resumen';updNav();renderIngResumen();}
 function renderIngresosDias(){
   var all=window.ING_DATA||[];
   var F=window.ING_F;
@@ -2652,7 +2653,7 @@ function renderIngresosDias(){
   html+=sel('ORIGEN','origen',['TODOS','NACIONAL','IMPORTADO'],{TODOS:'Todos'});
   html+=sel('GPC / BU','bu',['TODOS','FTW','APP','EQP'],{TODOS:'Todos'});
   html+=sel('ESTADO','estado',['TODOS','R','P'],{TODOS:'Todos',R:'Recibidos',P:'Pendientes'});
-  html+='<button class="btn btn-o btn-sm" onclick="goPage('resumen')">← Volver al resumen</button>';
+  html+='<button class="btn btn-o btn-sm" onclick="ingVolverResumen()">&#8592; Volver al resumen</button>';
   html+='</div>';
 
   if(!dias.length){
