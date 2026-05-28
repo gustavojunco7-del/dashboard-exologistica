@@ -146,6 +146,7 @@ input[type=file]{display:none}
     <div class="nav-item" id="nav-ranking" onclick="goPage('ranking')"><span class="ni">◈</span>Ranking mensual</div>
     <div class="nav-item" id="nav-dias" onclick="goPage('dias')"><span class="ni">◈</span>Ver por día</div>
     <div class="nav-item" id="nav-cal" onclick="goPage('cal')"><span class="ni">◈</span>Calidad</div>
+    <div class="nav-item" id="nav-calperf" onclick="goPage('calperf')"><span class="ni">◈</span>Performance</div>
     <div class="nav-item" id="nav-ing" onclick="goPage('resumen')"><span class="ni">◈</span>Ingresos</div>
     <div class="nav-div"></div>
     <div class="sb-sec">Configuración</div>
@@ -416,7 +417,7 @@ function buildHKResult(entries){
 }
 
 // ══ LOAD FLOWS ═══════════════════════════════════════════════════════════════
-function doLoad(){checkPass(function(){if(MOD==='pick')showPickUpload();else if(MOD==='cam'&&PAGE==='cal')checkPass(function(){showCalLoad();});else if(MOD==='cam')showCamLoad();else if(MOD==='hk')showHKLoad();else showIngresosLoad();});}
+function doLoad(){checkPass(function(){if(MOD==='pick')showPickUpload();else if(MOD==='cam'&&PAGE==='cal')checkPass(function(){showCalLoad();});else if(MOD==='cam'&&PAGE==='calperf')checkPass(function(){showCalPerfLoad();});else if(MOD==='cam')showCamLoad();else if(MOD==='hk')showHKLoad();else showIngresosLoad();});}
 function checkPass(action){var p=prompt('Contraseña:');if(p===APP_PASS)action();else if(p!==null)toast('Contraseña incorrecta','err');}
 
 function showPickUpload(){
@@ -629,6 +630,7 @@ function render(){
     if(PAGE==='resumen')renderCamResumen();
     else if(PAGE==='dias')SEL&&DB.cam[SEL]?renderCamDayDetail(SEL):renderCamDias();
     else if(PAGE==='cal')renderCalResumen();
+    else if(PAGE==='calperf')renderCalPerf();
   }else if(MOD==='hk'){
     if(PAGE==='resumen')renderHKResumen();
     else if(PAGE==='dias')SEL&&DB.hk[SEL]?renderHKDayDetail(SEL):renderHKDias();
@@ -1178,7 +1180,7 @@ function mkTable(title,thead,tbody){
 }
 function goPage(p){PAGE=p;SEL=null;updNav();render();}
 function updNav(){
-  var pages={pick:['resumen','ranking','dias','config'],cam:['resumen','dias','cal','config'],hk:['resumen','dias','config'],ing:['resumen']};
+  var pages={pick:['resumen','ranking','dias','config'],cam:['resumen','dias','cal','calperf','config'],hk:['resumen','dias','config'],ing:['resumen']};
   ['resumen','ranking','dias','config'].forEach(function(p){
     var el=document.getElementById('nav-'+p);if(!el)return;
     el.style.display=(pages[MOD]||[]).indexOf(p)>=0?'flex':'none';
@@ -2270,6 +2272,327 @@ function setupCalDelete(){
   };
 }
 setupCalDelete();
+
+// ══ CALIDAD — PERFORMANCE USUARIOS ══════════════════════════════════════════
+
+// Mapa de usuarios WMS → nombre real
+var CAL_USERS = {
+  'asacconi':  'Abel Sacconi',
+  'camdef01':  'Virginia Fazio',
+  'camdef03':  'Marcos Maturana',
+};
+function calUserName(u){ return CAL_USERS[u]||u; }
+
+// ── Supabase ──────────────────────────────────────────────────────────────────
+async function calPerfLoad(monthKey){
+  try{
+    var r=await fetch(SB_URL+'/rest/v1/calidad_perf?mes_key=like.'+monthKey+'*&select=*&order=fecha.asc',{headers:SBH});
+    if(!r.ok)throw new Error(r.status);
+    return await r.json()||[];
+  }catch(e){return[];}
+}
+
+async function calPerfUpsert(records){
+  // records = [{mes_key, fecha, usuario, unidades, articulos:[{cod,cant}]}, ...]
+  setSy(1);
+  try{
+    for(var i=0;i<records.length;i++){
+      var rec=records[i];
+      // PATCH first
+      var pr=await fetch(SB_URL+'/rest/v1/calidad_perf?fecha=eq.'+rec.fecha+'&usuario=eq.'+encodeURIComponent(rec.usuario),{
+        method:'PATCH',
+        headers:Object.assign({},SBH,{'Prefer':'return=minimal'}),
+        body:JSON.stringify(rec)
+      });
+      // Check if existed
+      var chk=await fetch(SB_URL+'/rest/v1/calidad_perf?fecha=eq.'+rec.fecha+'&usuario=eq.'+encodeURIComponent(rec.usuario)+'&select=fecha',{headers:SBH});
+      var ex=await chk.json();
+      if(!ex||!ex.length){
+        var ins=await fetch(SB_URL+'/rest/v1/calidad_perf',{
+          method:'POST',
+          headers:Object.assign({},SBH,{'Prefer':'return=minimal'}),
+          body:JSON.stringify(rec)
+        });
+        if(!ins.ok){var t=await ins.text();throw new Error('HTTP '+ins.status+' '+t);}
+      }
+    }
+    setSy(0,'ok');return true;
+  }catch(e){setSy(0,'er');toast('Error: '+e.message,'err');return false;}
+}
+
+// ── Parse Excel ───────────────────────────────────────────────────────────────
+function calPerfParse(buf){
+  var wb=XLSX.read(buf,{type:'array',cellDates:false});
+  var ws=wb.Sheets[wb.SheetNames[0]];
+  var rows=XLSX.utils.sheet_to_json(ws,{defval:null,raw:true});
+
+  // Agrupar por usuario + fecha (día)
+  var grouped={};
+  rows.forEach(function(row){
+    var fechaRaw=row['Fecha']||row['fecha']||'';
+    var usuario=(row['Usuario']||row['usuario']||'').trim().toLowerCase();
+    var cantidad=parseFloat(String(row['Cantidad']||row['cantidad']||'0').replace(',','.'))||0;
+    var articulo=String(row['Artículo']||row['Articulo']||row['articulo']||'').trim();
+
+    if(!usuario||!fechaRaw||!cantidad)return;
+
+    // Extraer fecha como YYYY-MM-DD
+    var fechaStr='';
+    if(typeof fechaRaw==='number'){
+      // Excel serial date
+      var d=new Date(Math.round((fechaRaw-25569)*86400*1000));
+      fechaStr=d.toISOString().slice(0,10);
+    } else {
+      var s=String(fechaRaw).trim();
+      // Format: "27/05/26 7:56" o "27/05/2026 07:56"
+      var m=s.match(/^(\d{1,2})\/(\d{2})\/(\d{2,4})/);
+      if(m){
+        var yr=+m[3];if(yr<100)yr+=2000;
+        fechaStr=yr+'-'+m[2].padStart(2,'0')+'-'+m[1].padStart(2,'0');
+      }
+    }
+    if(!fechaStr)return;
+
+    var key=usuario+'|'+fechaStr;
+    if(!grouped[key]){
+      grouped[key]={
+        mes_key:fechaStr.slice(0,7),
+        fecha:fechaStr,
+        usuario:usuario,
+        unidades:0,
+        articulos:{},
+        updated_at:new Date().toISOString()
+      };
+    }
+    grouped[key].unidades+=cantidad;
+    if(articulo){
+      grouped[key].articulos[articulo]=(grouped[key].articulos[articulo]||0)+cantidad;
+    }
+  });
+
+  // Convertir articulos de objeto a array
+  return Object.values(grouped).map(function(r){
+    r.articulos=Object.entries(r.articulos).map(function(e){
+      return {cod:e[0],cant:e[1]};
+    }).sort(function(a,b){return b.cant-a.cant;});
+    return r;
+  });
+}
+
+// ── Load UI ───────────────────────────────────────────────────────────────────
+function showCalPerfLoad(){
+  document.getElementById('main').innerHTML=
+    '<div style="max-width:600px;padding:4px">'+
+    '<div style="font-size:15px;font-weight:700;margin-bottom:6px">Cargar reporte de performance</div>'+
+    '<div style="background:var(--panel2);border:1px solid var(--border);border-radius:9px;padding:12px;margin-bottom:14px;font-size:12px;color:var(--muted2);line-height:1.8">'+
+    '1. Bajá el reporte del WMS para cada usuario (fecha + usuario)<br>'+
+    '2. Podés cargar los archivos de a uno o todos juntos<br>'+
+    '3. Si cargás el mismo usuario/fecha, pisa el registro anterior</div>'+
+
+    '<div class="drop-box" id="calPerfDrop" style="max-width:100%;margin-bottom:12px" '+
+    'ondragover="event.preventDefault();this.classList.add(\'drag\')" '+
+    'ondragleave="this.classList.remove(\'drag\')" '+
+    'ondrop="calPerfDrop(event)">'+
+    '<div class="drop-icon">📊</div>'+
+    '<div class="drop-t">Arrastrá uno o más archivos Excel</div>'+
+    '<div class="drop-s">asacconi · camdef01 · camdef03</div><br>'+
+    '<button class="btn btn-p" onclick="document.getElementById(\'calPerfFile\').click()">Seleccionar archivos</button>'+
+    '<input type="file" id="calPerfFile" accept=".xlsx,.xls" multiple onchange="calPerfReadFiles(this.files)">'+
+    '</div>'+
+    '<button class="btn btn-o btn-sm" onclick="renderCalPerf()">Cancelar</button>'+
+    '</div>';
+}
+
+function calPerfDrop(e){
+  e.preventDefault();
+  var b=document.getElementById('calPerfDrop');if(b)b.classList.remove('drag');
+  if(e.dataTransfer.files.length)calPerfReadFiles(e.dataTransfer.files);
+}
+
+function calPerfReadFiles(files){
+  if(!files||!files.length)return;
+  ldr(1,'Leyendo archivos...');
+  var allRecords=[];
+  var pending=files.length;
+
+  Array.from(files).forEach(function(f){
+    var reader=new FileReader();
+    reader.onload=function(e){
+      try{
+        var records=calPerfParse(e.target.result);
+        allRecords=allRecords.concat(records);
+      }catch(ex){toast('Error en '+f.name+': '+ex.message,'err');}
+      pending--;
+      if(pending===0){
+        if(!allRecords.length){toast('Sin datos válidos','err');ldr(0);return;}
+        // Preview
+        ldr(0);
+        calPerfPreview(allRecords);
+      }
+    };
+    reader.readAsArrayBuffer(f);
+  });
+}
+
+function calPerfPreview(records){
+  // Agrupar por usuario para mostrar resumen
+  var byUser={};
+  records.forEach(function(r){
+    var name=calUserName(r.usuario);
+    if(!byUser[name])byUser[name]={uds:0,dias:new Set()};
+    byUser[name].uds+=r.unidades;
+    byUser[name].dias.add(r.fecha);
+  });
+
+  var previewHtml='<div style="background:var(--panel2);border:1px solid var(--border);border-radius:9px;padding:14px;margin-top:14px">'+
+    '<div style="font-size:11px;font-weight:700;color:var(--muted2);margin-bottom:10px;text-transform:uppercase;letter-spacing:.5px">'+
+    records.length+' registros leídos</div>'+
+    '<div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:12px">';
+
+  Object.entries(byUser).forEach(function(e){
+    previewHtml+='<div style="background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:10px 14px;min-width:140px">'+
+      '<div style="font-size:11px;font-weight:700;margin-bottom:4px">'+e[0]+'</div>'+
+      '<div style="font-size:20px;font-weight:800;color:var(--cam)">'+Math.round(e[1].uds)+'</div>'+
+      '<div style="font-size:10px;color:var(--muted2)">uds · '+e[1].dias.size+' día'+(e[1].dias.size>1?'s':'')+'</div>'+
+      '</div>';
+  });
+
+  previewHtml+='</div>'+
+    '<div style="display:flex;gap:8px">'+
+    '<button class="btn btn-g" onclick="calPerfConfirmSave(window._calPerfRecords)">✓ Confirmar y guardar</button>'+
+    '<button class="btn btn-r btn-sm" onclick="showCalPerfLoad()">✕ Revisar</button>'+
+    '</div></div>';
+
+  window._calPerfRecords=records;
+  var main=document.getElementById('main').querySelector('div');
+  if(main)main.insertAdjacentHTML('beforeend',previewHtml);
+}
+
+async function calPerfConfirmSave(records){
+  ldr(1,'Guardando '+records.length+' registros...');
+  var ok=await calPerfUpsert(records);
+  if(ok){
+    window._calPerfRecords=null;
+    toast('✓ '+records.length+' registros guardados');
+    renderCalPerf();
+  }
+  ldr(0);
+}
+
+// ── Render ────────────────────────────────────────────────────────────────────
+async function renderCalPerf(){
+  ldr(1,'Cargando...');
+  var data=await calPerfLoad(CUR);
+  ldr(0);
+
+  if(!data.length){
+    document.getElementById('main').innerHTML=
+      '<div class="upload-area"><div style="text-align:center">'+
+      '<div style="font-size:44px;margin-bottom:14px">👤</div>'+
+      '<div style="font-size:15px;font-weight:700;margin-bottom:8px">Sin datos de performance en '+fmtMonth(CUR)+'</div>'+
+      '<div style="color:var(--muted2);font-size:12px;margin-bottom:18px">Cargá los reportes del WMS</div>'+
+      '<button class="btn btn-p" onclick="checkPass(function(){showCalPerfLoad();})">+ Cargar reportes</button>'+
+      '</div></div>';
+    return;
+  }
+
+  // Aggregations
+  var byUser={};
+  var byDate={};
+  var byArticulo={};
+  var totMes=0;
+
+  data.forEach(function(r){
+    var name=calUserName(r.usuario);
+    var uds=r.unidades||0;
+    totMes+=uds;
+
+    // Por usuario
+    if(!byUser[name])byUser[name]={nombre:name,uds:0,dias:0,porFecha:{}};
+    byUser[name].uds+=uds;
+    byUser[name].porFecha[r.fecha]=(byUser[name].porFecha[r.fecha]||0)+uds;
+
+    // Por fecha
+    if(!byDate[r.fecha])byDate[r.fecha]={};
+    byDate[r.fecha][name]=(byDate[r.fecha][name]||0)+uds;
+
+    // Por artículo
+    (r.articulos||[]).forEach(function(a){
+      if(!byArticulo[a.cod])byArticulo[a.cod]={cod:a.cod,cant:0};
+      byArticulo[a.cod].cant+=a.cant;
+    });
+  });
+
+  // Calcular días por usuario
+  Object.values(byUser).forEach(function(u){
+    u.dias=Object.keys(u.porFecha).length;
+    u.promDia=u.dias>0?Math.round(u.uds/u.dias):0;
+  });
+
+  var users=Object.values(byUser).sort(function(a,b){return b.uds-a.uds;});
+  var dates=Object.keys(byDate).sort();
+  var topArts=Object.values(byArticulo).sort(function(a,b){return b.cant-a.cant;}).slice(0,15);
+
+  var html='';
+
+  // KPIs
+  html+=mkStats([
+    {l:'Total unidades mes', v:Math.round(totMes).toLocaleString('es-AR'), cls:'ccam'},
+    {l:'Días con actividad',  v:dates.length},
+    {l:'Usuarios activos',    v:users.length},
+  ]);
+
+  // Tabla consolidada por usuario
+  html+='<div class="cg2" style="margin-bottom:14px">';
+  html+=mkTable('Consolidado del mes — '+fmtMonth(CUR),
+    '<tr><th>#</th><th>Usuario</th><th>Unidades mes</th><th>Días trabajados</th><th>Prom. / día</th></tr>',
+    users.map(function(u,i){
+      var medal=i===0?'🥇':i===1?'🥈':i===2?'🥉':(i+1)+'';
+      return '<tr>'+
+        '<td>'+medal+'</td>'+
+        '<td class="tl"><strong>'+u.nombre+'</strong></td>'+
+        '<td><strong style="color:var(--cam)">'+Math.round(u.uds).toLocaleString('es-AR')+'</strong></td>'+
+        '<td>'+u.dias+'</td>'+
+        '<td>'+u.promDia.toLocaleString('es-AR')+'</td>'+
+        '</tr>';
+    }).join('')
+  );
+
+  // Top artículos
+  html+=mkTable('Top artículos trabajados',
+    '<tr><th>#</th><th>Artículo</th><th>Unidades</th></tr>',
+    topArts.map(function(a,i){
+      return '<tr><td>'+(i+1)+'</td><td class="tl" style="font-size:10px">'+a.cod+'</td>'+
+        '<td><strong>'+Math.round(a.cant)+'</strong></td></tr>';
+    }).join('')
+  );
+  html+='</div>';
+
+  // Tabla por fecha
+  var dateRows=dates.map(function(d){
+    var fp=d.slice(8)+'/'+d.slice(5,7);
+    var total=Object.values(byDate[d]).reduce(function(a,v){return a+v;},0);
+    var cols=users.map(function(u){
+      var v=byDate[d][u.nombre]||0;
+      return '<td>'+(v>0?v:'—')+'</td>';
+    }).join('');
+    return '<tr><td class="tl"><strong>'+fp+'</strong></td>'+cols+
+      '<td><strong>'+Math.round(total)+'</strong></td></tr>';
+  }).join('');
+
+  var userHeaders=users.map(function(u){return '<th>'+u.nombre.split(' ')[0]+'</th>';}).join('');
+  html+=mkTable('Detalle diario',
+    '<tr><th>Fecha</th>'+userHeaders+'<th>Total día</th></tr>',
+    dateRows
+  );
+
+  // Botón cargar más
+  html+='<div style="margin-top:4px">'+
+    '<button class="btn btn-p btn-sm" onclick="checkPass(function(){showCalPerfLoad();})">+ Cargar reportes</button>'+
+    '</div>';
+
+  document.getElementById('main').innerHTML=html;
+}
 
 </script>
 </body>
