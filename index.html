@@ -609,9 +609,13 @@ function parseHKExcel(text){
 // ══ RENDER ROUTER ════════════════════════════════════════════════════════════
 function render(){
   updateSB();
-  document.getElementById('btnExport').style.display=Object.keys(DB[MOD]).length?'inline-block':'none';
+  document.getElementById('btnExport').style.display=(MOD!=='ing'&&Object.keys(DB[MOD]||{}).length)?'inline-block':'none';
   if(PAGE==='config'){renderConfig();return;}
-  if(MOD==='ing'){renderIngresosResumen();return;}
+  if(MOD==='ing'){
+    if(PAGE==='ing-dias')renderIngresosDias();
+    else renderIngResumen();
+    return;
+  }
   var days=Object.keys(DB[MOD]).sort();
   if(!days.length){
     var labels={pick:'Cargá el primer día con + Cargar día',cam:'Pegá el mail de producción con + Cargar producción',hk:'Cargá la primera auditoría con + Cargar auditoría'};
@@ -635,10 +639,7 @@ function render(){
   }else if(MOD==='hk'){
     if(PAGE==='resumen')renderHKResumen();
     else if(PAGE==='dias')SEL&&DB.hk[SEL]?renderHKDayDetail(SEL):renderHKDias();
-  }else if(MOD==='ing'){
-    if(PAGE==='ing-dias')renderIngresosDias();
-    else renderIngResumen();
-  }
+
 }
 
 // ══ CONFIG RENDER ════════════════════════════════════════════════════════════
@@ -1390,7 +1391,7 @@ function readIngresosFile(f){
         if(ok){
           toast('✓ '+rows.length+' registros guardados');
           window.ING_DATA=null;
-          renderIngresosResumen();
+          renderIngResumen();
         }
         ldr(0);
       });
@@ -1403,7 +1404,7 @@ function readIngresosFile(f){
 window.ING_FILTERS={mes:new Date().getMonth()+1,origen:'TODOS',estado:'TODOS',bu:'TODOS'};
 
 // ── Render Resumen ────────────────────────────────────────────────────────────
-async function renderIngresosResumen(){
+async function renderIngResumen(){
   if(window.ING_DATA&&window.ING_DATA.length){buildIngresosView();return;}
   document.getElementById('main').innerHTML=
     '<div class="upload-area"><div style="text-align:center">'+
@@ -1605,7 +1606,7 @@ async function updateEmbarqueNac(oldEmb,newEmb,origen){
       headers:Object.assign({},SBH,{'Prefer':'return=minimal'}),
       body:JSON.stringify({embarque:newEmb.trim(),updated_at:new Date().toISOString()})
     });
-    if(r.ok){toast('✓ Embarque actualizado');window.ING_DATA=null;await renderIngresosResumen();}
+    if(r.ok){toast('✓ Embarque actualizado');window.ING_DATA=null;await renderIngResumen();}
     else{toast('Error actualizando','err');}
   }catch(e){toast('Error: '+e.message,'err');}
   ldr(0);
@@ -1754,6 +1755,8 @@ function ingFiltered(){
 
 // ── Render ────────────────────────────────────────────────────────────────────
 async function renderIngResumen(){
+  // alias
+  window.renderIngResumen=renderIngResumen;
   if(!window.ING_DATA){
     document.getElementById('main').innerHTML=
       '<div class="no-data">⏳ Cargando datos...</div>';
