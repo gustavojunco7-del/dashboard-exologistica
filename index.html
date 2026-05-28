@@ -145,7 +145,8 @@ input[type=file]{display:none}
     <div class="nav-item" id="nav-dias" onclick="goPage('dias')"><span class="ni">📅</span>Ver por día</div>
     <div class="nav-item" id="nav-cal" onclick="goPage('cal')"><span class="ni">◈</span>Calidad</div>
     <div class="nav-item" id="nav-calperf" onclick="goPage('calperf')"><span class="ni">◈</span>Performance</div>
-    <div class="nav-item" id="nav-ing" onclick="goPage('resumen')"><span class="ni">📥</span>Ingresos</div>
+    <div class="nav-item" id="nav-ing" onclick="goPage('resumen')"><span class="ni">◈</span>Ingresos</div>
+    <div class="nav-item" id="nav-ing-dias" onclick="goPage('ing-dias')"><span class="ni">◈</span>Ver por fecha</div>
     <div class="nav-div"></div>
     <div class="sb-sec">Configuración</div>
     <div class="nav-item" id="nav-config" onclick="goPage('config')"><span class="ni">⚙️</span>Configuración</div>
@@ -1183,7 +1184,7 @@ function mkTable(title,thead,tbody){
 }
 function goPage(p){PAGE=p;SEL=null;updNav();render();}
 function updNav(){
-  var pages={pick:['resumen','ranking','dias','config'],cam:['resumen','dias','cal','calperf','config'],hk:['resumen','dias','config'],ing:['resumen']};
+  var pages={pick:['resumen','ranking','dias','config'],cam:['resumen','dias','cal','calperf','config'],hk:['resumen','dias','config'],ing:['resumen','ing-dias']};
   ['resumen','ranking','dias','cal','calperf','config','ing','ing-dias'].forEach(function(p){
     var el=document.getElementById('nav-'+p);if(!el)return;
     el.style.display=(pages[MOD]||[]).indexOf(p)>=0?'flex':'none';
