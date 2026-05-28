@@ -2608,112 +2608,76 @@ async function renderCalPerf(){
 }
 
 
-function ingVolverResumen(){PAGE='resumen';updNav();renderIngResumen();}
-
 function renderIngresosDias(){
   var all=window.ING_DATA||[];
   var F=window.ING_F;
   var selFecha=window.ING_SEL_FECHA||null;
-
   var filtered=all.filter(function(r){
     if(F.origen!=='TODOS'&&r.origen!==F.origen)return false;
     if(F.bu!=='TODOS'&&r.bu!==F.bu)return false;
     if(F.estado!=='TODOS'&&r.estado!==F.estado)return false;
     return true;
   });
-
-  // Agrupar por fecha
-  var byFecha={};
+  var byF={};
   filtered.forEach(function(r){
     var f=r.fecha_llegada||'Sin fecha';
-    if(!byFecha[f])byFecha[f]={fecha:f,uds:0,bultos:0,pend:0,dels:new Set(),nac:0,imp:0,rows:[]};
-    byFecha[f].uds+=r.unidades||0;
-    byFecha[f].bultos+=r.bultos||0;
-    byFecha[f].dels.add(r.nro_delivery);
-    if(r.estado==='P')byFecha[f].pend+=r.unidades||0;
-    if(r.origen==='NACIONAL')byFecha[f].nac+=r.unidades||0;
-    else byFecha[f].imp+=r.unidades||0;
-    byFecha[f].rows.push(r);
+    if(!byF[f])byF[f]={f:f,u:0,b:0,p:0,d:new Set(),n:0,i:0,rows:[]};
+    byF[f].u+=r.unidades||0;byF[f].b+=r.bultos||0;
+    byF[f].d.add(r.nro_delivery);
+    if(r.estado==='P')byF[f].p+=r.unidades||0;
+    if(r.origen==='NACIONAL')byF[f].n+=r.unidades||0;else byF[f].i+=r.unidades||0;
+    byF[f].rows.push(r);
   });
-
-  var dias=Object.values(byFecha).sort(function(a,b){return b.fecha.localeCompare(a.fecha);});
-  var mNombres=['','Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
-
-  // Filtros
+  var dias=Object.values(byF).sort(function(a,b){return b.f.localeCompare(a.f);});
+  window._ing_f=dias.map(function(d){return d.f;});
   var html='<div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;align-items:center">';
-  function fsel(label,key,opts,lmap){
-    var s='<div style="display:flex;align-items:center;gap:5px">'+
-      '<span style="font-size:10px;color:var(--muted2);font-weight:700;text-transform:uppercase">'+label+'</span>'+
-      '<select onchange="window.ING_F.'+key+'=this.value;window.ING_SEL_FECHA=null;renderIngresosDias()" '+
-      'style="background:var(--panel2);border:1px solid var(--border);color:var(--text);border-radius:7px;padding:4px 8px;font-size:11px;font-family:inherit">';
+  function fsel(lbl,key,opts,lmap){
+    var s='<div style="display:flex;align-items:center;gap:5px"><span style="font-size:10px;color:var(--muted2);font-weight:700;text-transform:uppercase">'+lbl+'</span><select onchange="window.ING_F.'+key+'=this.value;window.ING_SEL_FECHA=null;renderIngresosDias()" style="background:var(--panel2);border:1px solid var(--border);color:var(--text);border-radius:7px;padding:4px 8px;font-size:11px;font-family:inherit">';
     opts.forEach(function(o){s+='<option value="'+o+'"'+(F[key]==o?' selected':'')+'>'+( lmap&&lmap[o]||o)+'</option>';});
     return s+'</select></div>';
   }
   html+=fsel('ORIGEN','origen',['TODOS','NACIONAL','IMPORTADO'],{TODOS:'Todos'});
   html+=fsel('GPC / BU','bu',['TODOS','FTW','APP','EQP'],{TODOS:'Todos'});
   html+=fsel('ESTADO','estado',['TODOS','R','P'],{TODOS:'Todos',R:'Recibidos',P:'Pendientes'});
-  html+='<button class="btn btn-o btn-sm" onclick="ingVolverResumen()">&#8592; Volver al resumen</button>';
+  html+='<button class="btn btn-o btn-sm" onclick="ingVolverResumen()">&#8592; Volver</button>';
   html+='</div>';
-
-  if(!dias.length){
-    html+='<div class="no-data">Sin datos con los filtros seleccionados</div>';
-    document.getElementById('main').innerHTML=html;
-    return;
+  if(!dias.length){document.getElementById('main').innerHTML=html+'<div class="no-data">Sin datos</div>';return;}
+  var tU=dias.reduce(function(a,d){return a+d.u;},0);
+  var tP=dias.reduce(function(a,d){return a+d.p;},0);
+  html+=mkStats([{l:'Dias',v:dias.length},{l:'Total unidades',v:tU.toLocaleString('es-AR'),cls:'cing'},{l:'Pendientes',v:tP.toLocaleString('es-AR'),cls:tP>0?'cbad':'cok'}]);
+  if(selFecha&&byF[selFecha]){
+    var d=byF[selFecha];
+    var fp=selFecha==='Sin fecha'?selFecha:selFecha.slice(8)+'/'+selFecha.slice(5,7)+'/'+selFecha.slice(0,4);
+    html+='<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px"><strong>'+fp+'</strong><button class="btn btn-o btn-xs" onclick="window.ING_SEL_FECHA=null;renderIngresosDias()">&#x2715; Cerrar</button></div>';
+    html+=mkTable('Detalle '+fp,
+      '<tr><th>N Delivery</th><th>Origen</th><th>GPC</th><th>Proveedor</th><th>Embarque</th><th>Bultos</th><th>Unidades</th><th>Estado</th></tr>',
+      d.rows.map(function(r){
+        return '<tr><td><strong>'+r.nro_delivery+'</strong></td>'+
+          '<td><span class="badge '+(r.origen==='NACIONAL'?'btm':'bcam')+'">'+r.origen+'</span></td>'+
+          '<td><span class="badge bing">'+r.bu+'</span></td>'+
+          '<td class="tl">'+r.proveedor+'</td>'+
+          '<td class="tl" style="font-size:10px">'+r.embarque+'</td>'+
+          '<td>'+r.bultos+'</td>'+
+          '<td><strong>'+r.unidades.toLocaleString('es-AR')+'</strong></td>'+
+          '<td>'+(r.estado==='P'?'<span class="badge bbad">PEND</span>':'<span class="badge bok">OK</span>')+'</td></tr>';
+      }).join(''));
   }
-
-  var totUds=dias.reduce(function(a,d){return a+d.uds;},0);
-  var totPend=dias.reduce(function(a,d){return a+d.pend;},0);
-  html+=mkStats([
-    {l:'Dias con actividad',v:dias.length},
-    {l:'Total unidades',v:totUds.toLocaleString('es-AR'),cls:'cing'},
-    {l:'Pendientes',v:totPend.toLocaleString('es-AR'),cls:totPend>0?'cbad':'cok'},
-  ]);
-
-  // Si hay fecha seleccionada, mostrar detalle
-  if(selFecha&&byFecha[selFecha]){
-    var d=byFecha[selFecha];
-    var fp=selFecha!=='Sin fecha'?selFecha.slice(8)+'/'+selFecha.slice(5,7)+'/'+selFecha.slice(0,4):selFecha;
-    html+='<div style="margin-bottom:10px;display:flex;align-items:center;gap:10px">';
-    html+='<div style="font-size:14px;font-weight:700">'+fp+'</div>';
-    html+='<button class="btn btn-o btn-xs" onclick="window.ING_SEL_FECHA=null;renderIngresosDias()">✕ Cerrar detalle</button>';
-    html+='</div>';
-    var detRows=d.rows.map(function(r){
-      return '<tr>'+
-        '<td><strong>'+r.nro_delivery+'</strong></td>'+
-        '<td><span class="badge '+(r.origen==='NACIONAL'?'btm':'bcam')+'">'+r.origen+'</span></td>'+
-        '<td><span class="badge bing">'+r.bu+'</span></td>'+
-        '<td class="tl">'+r.proveedor+'</td>'+
-        '<td class="tl" style="font-size:10px">'+r.embarque+'</td>'+
-        '<td>'+r.bultos+'</td>'+
-        '<td><strong>'+r.unidades.toLocaleString('es-AR')+'</strong></td>'+
-        '<td>'+(r.estado==='P'?'<span class="badge bbad">PEND</span>':'<span class="badge bok">OK</span>')+'</td>'+
-        '</tr>';
-    }).join('');
-    html+=mkTable('Detalle — '+fp+' ('+d.rows.length+' deliveries)',
-      '<tr><th>N° Delivery</th><th>Origen</th><th>GPC</th><th>Proveedor</th><th>Embarque</th><th>Bultos</th><th>Unidades</th><th>Estado</th></tr>',
-      detRows);
-  }
-
-  // Tabla por día — clic para ver detalle
-  var rows=dias.map(function(d){
-    var fp=d.fecha!=='Sin fecha'?d.fecha.slice(8)+'/'+d.fecha.slice(5,7)+'/'+d.fecha.slice(0,4):d.fecha;
-    var isSelected=(d.fecha===selFecha);
-    return '<tr style="cursor:pointer'+(isSelected?';background:rgba(59,130,246,.08)':'')+'" onclick="window.ING_SEL_FECHA=''+d.fecha+'';renderIngresosDias()">'+
-      '<td class="tl"><strong style="color:var(--accent)">'+fp+'</strong></td>'+
-      '<td>'+d.dels.size+'</td>'+
-      '<td>'+(d.nac>0?'<span class="badge btm">'+d.nac.toLocaleString('es-AR')+'</span>':'&#8212;')+'</td>'+
-      '<td>'+(d.imp>0?'<span class="badge bcam">'+d.imp.toLocaleString('es-AR')+'</span>':'&#8212;')+'</td>'+
-      '<td><strong>'+d.uds.toLocaleString('es-AR')+'</strong></td>'+
-      '<td>'+d.bultos.toLocaleString('es-AR')+'</td>'+
-      '<td>'+(d.pend>0?'<span class="badge bbad">'+d.pend.toLocaleString('es-AR')+'</span>':'<span class="badge bok">OK</span>')+'</td>'+
-      '<td style="color:var(--accent);font-size:12px">'+(isSelected?'▼':'›')+'</td>'+
-      '</tr>';
-  }).join('');
-
-  html+=mkTable('Ingresos por fecha de llegada ('+dias.length+' dias) — clic en fila para ver detalle',
+  html+=mkTable('Ingresos por fecha (clic para ver detalle)',
     '<tr><th>Fecha</th><th>Deliveries</th><th>Nacional</th><th>Importado</th><th>Total Uds</th><th>Bultos</th><th>Pendiente</th><th></th></tr>',
-    rows);
-
+    dias.map(function(d,i){
+      var fp=d.f==='Sin fecha'?d.f:d.f.slice(8)+'/'+d.f.slice(5,7)+'/'+d.f.slice(0,4);
+      var isSel=(d.f===selFecha);
+      var bg=isSel?'background:rgba(59,130,246,.08);':'';
+      return '<tr style="cursor:pointer;'+bg+'" onclick="ingSelFechaClick('+i+')">'+
+        '<td class="tl"><strong style="color:var(--accent)">'+fp+'</strong></td>'+
+        '<td>'+d.d.size+'</td>'+
+        '<td>'+(d.n>0?'<span class="badge btm">'+d.n.toLocaleString('es-AR')+'</span>':'&#8212;')+'</td>'+
+        '<td>'+(d.i>0?'<span class="badge bcam">'+d.i.toLocaleString('es-AR')+'</span>':'&#8212;')+'</td>'+
+        '<td><strong>'+d.u.toLocaleString('es-AR')+'</strong></td>'+
+        '<td>'+d.b.toLocaleString('es-AR')+'</td>'+
+        '<td>'+(d.p>0?'<span class="badge bbad">'+d.p.toLocaleString('es-AR')+'</span>':'<span class="badge bok">OK</span>')+'</td>'+
+        '<td style="font-size:12px;color:var(--accent)">'+(isSel?'&#9660;':'&#8250;')+'</td></tr>';
+    }).join(''));
   document.getElementById('main').innerHTML=html;
 }
 
