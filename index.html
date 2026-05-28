@@ -148,6 +148,7 @@ input[type=file]{display:none}
     <div class="nav-item" id="nav-cal" onclick="goPage('cal')"><span class="ni">◈</span>Calidad</div>
     <div class="nav-item" id="nav-calperf" onclick="goPage('calperf')"><span class="ni">◈</span>Performance</div>
     <div class="nav-item" id="nav-ing" onclick="goPage('resumen')"><span class="ni">◈</span>Ingresos</div>
+    <div class="nav-item" id="nav-ing-dias" onclick="goPage('ing-dias')"><span class="ni">◈</span>Ver por fecha</div>
     <div class="nav-div"></div>
     <div class="sb-sec">Configuración</div>
     <div class="nav-item" id="nav-config" onclick="goPage('config')"><span class="ni">◈</span>Configuración</div>
@@ -634,7 +635,10 @@ function render(){
   }else if(MOD==='hk'){
     if(PAGE==='resumen')renderHKResumen();
     else if(PAGE==='dias')SEL&&DB.hk[SEL]?renderHKDayDetail(SEL):renderHKDias();
-  }else if(MOD==='ing'){renderIngResumen();}
+  }else if(MOD==='ing'){
+    if(PAGE==='ing-dias')renderIngresosDias();
+    else renderIngResumen();
+  }
 }
 
 // ══ CONFIG RENDER ════════════════════════════════════════════════════════════
@@ -855,13 +859,22 @@ function renderCamResumen(){
   html+='</div>';
 
   html+='<div style="display:grid;grid-template-columns:200px 1fr 320px;gap:12px;margin-bottom:12px">';
+  // Unidades calidad del mes
+  var calUdsMes=0;
+  if(DB.cal){Object.values(DB.cal).forEach(function(c){if(c.mes_key===CUR&&c.totales)calUdsMes+=(c.totales.fisica||0);});}
+  var totalCamara=totU+calUdsMes;
+
   html+='<div><div class="tw"><div class="th2"><h3>Por Categoría</h3></div>';
   html+='<table><thead><tr><th>Categoría</th><th>Unidades</th><th>Trámites</th></tr></thead><tbody>';
   ['CLIENTES','TIENDAS PROPIAS'].forEach(function(cat){
     var r=byCat[cat]||{cant:0,n:0};
     html+='<tr><td class="tl" style="font-size:10px">'+cat+'</td><td>'+r.cant.toLocaleString('es-AR')+'</td><td>'+r.n+'</td></tr>';
   });
-  html+='<tr style="background:var(--panel2)"><td class="tl" style="font-weight:700;font-size:10px">TOTAL</td><td><strong>'+totU.toLocaleString('es-AR')+'</strong></td><td><strong>'+totT+'</strong></td></tr>';
+  html+='<tr style="background:var(--panel2)"><td class="tl" style="font-weight:700;font-size:10px">PRODUCCIÓN</td><td><strong>'+totU.toLocaleString('es-AR')+'</strong></td><td><strong>'+totT+'</strong></td></tr>';
+  if(calUdsMes>0){
+    html+='<tr><td class="tl" style="font-size:10px;color:var(--cal)">CALIDAD</td><td style="color:var(--cal)">'+calUdsMes.toLocaleString('es-AR')+'</td><td style="color:var(--muted)">—</td></tr>';
+    html+='<tr style="background:var(--panel2);border-top:2px solid var(--cam)"><td class="tl" style="font-weight:800;font-size:10px">TOTAL CÁMARA</td><td><strong style="color:var(--cam)">'+totalCamara.toLocaleString('es-AR')+'</strong></td><td><strong>'+totT+'</strong></td></tr>';
+  }
   html+='</tbody></table></div></div>';
 
   html+='<div class="tw"><div class="th2"><h3>Top Clientes/Destinos</h3><span style="font-size:10px;color:var(--muted)">'+catFil+'</span></div>';
@@ -1180,7 +1193,7 @@ function mkTable(title,thead,tbody){
 }
 function goPage(p){PAGE=p;SEL=null;updNav();render();}
 function updNav(){
-  var pages={pick:['resumen','ranking','dias','config'],cam:['resumen','dias','cal','calperf','config'],hk:['resumen','dias','config'],ing:['resumen']};
+  var pages={pick:['resumen','ranking','dias','config'],cam:['resumen','dias','cal','calperf','config'],hk:['resumen','dias','config'],ing:['resumen','ing-dias']};
   ['resumen','ranking','dias','config'].forEach(function(p){
     var el=document.getElementById('nav-'+p);if(!el)return;
     el.style.display=(pages[MOD]||[]).indexOf(p)>=0?'flex':'none';
@@ -2590,6 +2603,92 @@ async function renderCalPerf(){
   html+='<div style="margin-top:4px">'+
     '<button class="btn btn-p btn-sm" onclick="checkPass(function(){showCalPerfLoad();})">+ Cargar reportes</button>'+
     '</div>';
+
+  document.getElementById('main').innerHTML=html;
+}
+
+
+function renderIngresosDias(){
+  var all=window.ING_DATA||[];
+  var F=window.ING_F;
+
+  // Filtrar igual que buildIngView pero sin filtro de fecha
+  var filtered=all.filter(function(r){
+    if(F.origen!=='TODOS'&&r.origen!==F.origen)return false;
+    if(F.bu!=='TODOS'&&r.bu!==F.bu)return false;
+    if(F.estado!=='TODOS'&&r.estado!==F.estado)return false;
+    return true;
+  });
+
+  // Agrupar por fecha
+  var byFecha={};
+  filtered.forEach(function(r){
+    var f=r.fecha_llegada||'Sin fecha';
+    if(!byFecha[f])byFecha[f]={fecha:f,uds:0,bultos:0,pend:0,dels:new Set(),nac:0,imp:0};
+    byFecha[f].uds+=r.unidades||0;
+    byFecha[f].bultos+=r.bultos||0;
+    byFecha[f].dels.add(r.nro_delivery);
+    if(r.estado==='P')byFecha[f].pend+=r.unidades||0;
+    if(r.origen==='NACIONAL')byFecha[f].nac+=r.unidades||0;
+    else byFecha[f].imp+=r.unidades||0;
+  });
+
+  var dias=Object.values(byFecha).sort(function(a,b){return b.fecha.localeCompare(a.fecha);});
+  var mNombres=['','Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+
+  // Filtros rápidos
+  var html='<div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;align-items:center">';
+  function sel(label,key,opts,labelMap){
+    var s='<div style="display:flex;align-items:center;gap:5px">'+
+      '<span style="font-size:10px;color:var(--muted2);font-weight:700;text-transform:uppercase">'+label+'</span>'+
+      '<select onchange="window.ING_F.'+key+'=this.value;renderIngresosDias()" '+
+      'style="background:var(--panel2);border:1px solid var(--border);color:var(--text);border-radius:7px;padding:4px 8px;font-size:11px;font-family:inherit">';
+    opts.forEach(function(o){
+      var lbl=labelMap?labelMap[o]||o:o;
+      s+='<option value="'+o+'"'+(F[key]==o?' selected':'')+'>'+lbl+'</option>';
+    });
+    return s+'</select></div>';
+  }
+  html+=sel('ORIGEN','origen',['TODOS','NACIONAL','IMPORTADO'],{TODOS:'Todos'});
+  html+=sel('GPC / BU','bu',['TODOS','FTW','APP','EQP'],{TODOS:'Todos'});
+  html+=sel('ESTADO','estado',['TODOS','R','P'],{TODOS:'Todos',R:'Recibidos',P:'Pendientes'});
+  html+='<button class="btn btn-o btn-sm" onclick="PAGE='resumen';updNav();renderIngResumen()">← Volver al resumen</button>';
+  html+='</div>';
+
+  if(!dias.length){
+    html+='<div class="no-data">Sin datos con los filtros seleccionados</div>';
+    document.getElementById('main').innerHTML=html;
+    return;
+  }
+
+  // KPI rápido
+  var totUds=dias.reduce(function(a,d){return a+d.uds;},0);
+  var totPend=dias.reduce(function(a,d){return a+d.pend;},0);
+  html+=mkStats([
+    {l:'Días con actividad',v:dias.length},
+    {l:'Total unidades',v:totUds.toLocaleString('es-AR'),cls:'cing'},
+    {l:'Pendientes',v:totPend.toLocaleString('es-AR'),cls:totPend>0?'cbad':'cok'},
+  ]);
+
+  // Tabla por día
+  var rows=dias.map(function(d){
+    var fp=d.fecha!=='Sin fecha'?d.fecha.slice(8)+'/'+d.fecha.slice(5,7)+'/'+d.fecha.slice(0,4):d.fecha;
+    return '<tr>'+
+      '<td class="tl"><strong>'+fp+'</strong></td>'+
+      '<td>'+d.dels.size+'</td>'+
+      '<td>'+(d.nac>0?'<span class="badge btm">'+d.nac.toLocaleString('es-AR')+'</span>':'—')+'</td>'+
+      '<td>'+(d.imp>0?'<span class="badge bcam">'+d.imp.toLocaleString('es-AR')+'</span>':'—')+'</td>'+
+      '<td><strong>'+d.uds.toLocaleString('es-AR')+'</strong></td>'+
+      '<td>'+d.bultos.toLocaleString('es-AR')+'</td>'+
+      '<td>'+(d.pend>0?'<span class="badge bbad">'+d.pend.toLocaleString('es-AR')+'</span>':'<span class="badge bok">OK</span>')+'</td>'+
+      '</tr>';
+  }).join('');
+
+  html+=mkTable(
+    'Ingresos por fecha de llegada ('+dias.length+' días)',
+    '<tr><th>Fecha</th><th>Deliveries</th><th>Nacional</th><th>Importado</th><th>Total Uds</th><th>Bultos</th><th>Pendiente</th></tr>',
+    rows
+  );
 
   document.getElementById('main').innerHTML=html;
 }
