@@ -1194,7 +1194,7 @@ function mkTable(title,thead,tbody){
 function goPage(p){PAGE=p;SEL=null;updNav();render();}
 function updNav(){
   var pages={pick:['resumen','ranking','dias','config'],cam:['resumen','dias','cal','calperf','config'],hk:['resumen','dias','config'],ing:['resumen','ing-dias']};
-  ['resumen','ranking','dias','config'].forEach(function(p){
+  ['resumen','ranking','dias','cal','calperf','config','ing','ing-dias'].forEach(function(p){
     var el=document.getElementById('nav-'+p);if(!el)return;
     el.style.display=(pages[MOD]||[]).indexOf(p)>=0?'flex':'none';
     el.classList.toggle('active',p===PAGE);
