@@ -55,7 +55,7 @@ button{cursor:pointer;font-family:inherit}
 .th2{padding:11px 15px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--border);gap:10px;flex-wrap:wrap}
 .th2 h3{font-size:13px;font-weight:700}
 table{width:100%;border-collapse:collapse;font-size:11px}
-th{background:var(--panel2);padding:7px 10px;text-align:center;font-size:8px;font-weight:700;color:var(--muted2);text-transform:uppercase;letter-spacing:.8px;border-bottom:1px solid var(--border);white-space:nowrap}
+th{background:var(--panel2);padding:7px 10px;text-align:center;font-size:8px;font-weight:700;color:var(--muted2);text-transform:uppercase;letter-spacing:.8px;border-bottom:1px solid var(--border);white-space:nowrap;min-width:40px}
 td{padding:7px 10px;text-align:center;border-bottom:1px solid #1a2640}
 tr:last-child td{border-bottom:none}tr:hover td{background:rgba(59,130,246,.04)}
 td.tl{text-align:left;font-weight:600}
@@ -271,7 +271,11 @@ function switchModule(mod){
   document.getElementById('btnLoad').textContent=labels[mod]||'+ Cargar';
   updNav();
   ldr(1,'Cargando...');
-  if(MOD==='ing'){renderIngResumen();ldr(0);return;}
+  if(MOD==='ing'){
+    if(PAGE==='ing-dias'){renderIngresosDias();ldr(0);}
+    else{renderIngResumen();ldr(0);}
+    return;
+  }
   updMS().then(function(){
     sbGet(MOD,CUR).then(function(data){
       DB[MOD]=data;
@@ -1194,7 +1198,7 @@ function mkTable(title,thead,tbody){
 function goPage(p){PAGE=p;SEL=null;updNav();render();}
 function updNav(){
   var pages={pick:['resumen','ranking','dias','config'],cam:['resumen','dias','cal','calperf','config'],hk:['resumen','dias','config'],ing:['resumen','ing-dias']};
-  ['resumen','ranking','dias','config'].forEach(function(p){
+  ['resumen','ranking','dias','cal','calperf','config','ing','ing-dias'].forEach(function(p){
     var el=document.getElementById('nav-'+p);if(!el)return;
     el.style.display=(pages[MOD]||[]).indexOf(p)>=0?'flex':'none';
     el.classList.toggle('active',p===PAGE);
@@ -2608,6 +2612,8 @@ async function renderCalPerf(){
 }
 
 
+function ingSelFechaClick(idx){window.ING_SEL_FECHA=window._ing_f[idx];renderIngresosDias();}
+function ingVolverResumen(){PAGE='resumen';updNav();renderIngResumen();}
 function renderIngresosDias(){
   var all=window.ING_DATA||[];
   var F=window.ING_F;
