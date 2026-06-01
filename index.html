@@ -615,7 +615,11 @@ function render(){
   updateSB();
   document.getElementById('btnExport').style.display=Object.keys(DB[MOD]).length?'inline-block':'none';
   if(PAGE==='config'){renderConfig();return;}
-  if(MOD==='ing'){renderIngresosResumen();return;}
+  if(MOD==='ing'){
+    if(PAGE==='ing-dias')renderIngresosDias();
+    else renderIngresosResumen();
+    return;
+  }
   var days=Object.keys(DB[MOD]).sort();
   if(!days.length){
     var labels={pick:'Cargá el primer día con + Cargar día',cam:'Pegá el mail de producción con + Cargar producción',hk:'Cargá la primera auditoría con + Cargar auditoría'};
