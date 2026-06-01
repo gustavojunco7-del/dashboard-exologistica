@@ -613,7 +613,7 @@ function parseHKExcel(text){
 // ══ RENDER ROUTER ════════════════════════════════════════════════════════════
 function render(){
   updateSB();
-  document.getElementById('btnExport').style.display=Object.keys(DB[MOD]).length?'inline-block':'none';
+  document.getElementById('btnExport').style.display=(MOD!=='ing'&&Object.keys(DB[MOD]||{}).length)?'inline-block':'none';
   if(PAGE==='config'){renderConfig();return;}
   if(MOD==='ing'){
     if(PAGE==='ing-dias')renderIngresosDias();
