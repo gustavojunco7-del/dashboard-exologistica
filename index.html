@@ -705,7 +705,7 @@ function pickShift(){
   return res;
 }
 function renderPickResumen(){
-  var days=Object.keys(DB.pick).sort(),sh=pickShift();
+  var days=Object.keys(DB.pick).filter(function(dk){return dk.indexOf(CUR)===0;}).sort(),sh=pickShift();
   var totI=sh.TM.items+sh.TT.items+sh.TN.items;
   var totE=sh.TM.exc+sh.TT.exc+sh.TN.exc;
   var totD=sh.TM.dead+sh.TT.dead+sh.TN.dead,totP=sh.TM.prod+sh.TT.prod+sh.TN.prod;
@@ -766,7 +766,7 @@ function renderPickRanking(){
     mkTable('Items/hora promedio','<tr><th>#</th><th>Usuario</th><th>Días</th><th>Items</th><th>Prom i/h</th><th>Excedente acum.</th><th>%</th></tr>',best);
 }
 function renderPickDias(){
-  var days=Object.keys(DB.pick).sort();
+  var days=Object.keys(DB.pick).filter(function(dk){return dk.indexOf(CUR)===0;}).sort();
   var cards=days.map(function(dk){
     var day=DB.pick[dk],fp=dk.split('-'),lbl=(+fp[2])+'/'+fp[1]+'/'+fp[0];
     var ti=0,te=0;['TM','TT','TN'].forEach(function(s){(day[s]||[]).forEach(function(u){ti+=u.items;te+=u.exc;});});
@@ -805,7 +805,7 @@ function renderPickDayDetail(dk){
 
 // ══ CAMARA RENDERS ═══════════════════════════════════════════════════════════
 function renderCamResumen(){
-  var days=Object.keys(DB.cam).sort();
+  var days=Object.keys(DB.cam).filter(function(dk){return dk.indexOf(CUR)===0;}).sort();
   if(!days.length){document.getElementById('main').innerHTML='<div class="no-data">Sin datos cargados</div>';return;}
   var totU=0,totT=0,byCat={CLIENTES:{cant:0,n:0},'TIENDAS PROPIAS':{cant:0,n:0}},byCli={},byDay={};
   days.forEach(function(dk){
@@ -932,7 +932,7 @@ function renderCamResumen(){
   document.getElementById('main').innerHTML=html;
 }
 function renderCamDias(){
-  var days=Object.keys(DB.cam).sort();
+  var days=Object.keys(DB.cam).filter(function(dk){return dk.indexOf(CUR)===0;}).sort();
   var cards=days.map(function(dk){
     var d=DB.cam[dk],fp=dk.split('-'),lbl=(+fp[2])+'/'+fp[1]+'/'+fp[0];
     return '<div class="day-card" onclick="viewDay(\''+dk+'\')">'+
@@ -970,7 +970,7 @@ function weekNum(dk){
   return Math.ceil((d.getDate()+first.getDay())/7);
 }
 function renderHKResumen(){
-  var days=Object.keys(DB.hk).sort();
+  var days=Object.keys(DB.hk).filter(function(dk){return dk.indexOf(CUR)===0;}).sort();
   if(!days.length){document.getElementById('main').innerHTML='<div class="no-data">Sin datos cargados</div>';return;}
   var target=HKT();
   var ZONES=['Pasillo 700','Pasillo 800','Mezzanine N1','Mezzanine N2','Mezzanine N3'];
@@ -1077,7 +1077,7 @@ function renderHKResumen(){
   document.getElementById('main').innerHTML=html;
 }
 function renderHKDias(){
-  var days=Object.keys(DB.hk).sort(),target=HKT();
+  var days=Object.keys(DB.hk).filter(function(dk){return dk.indexOf(CUR)===0;}).sort(),target=HKT();
   var cards=days.map(function(dk){
     var d=DB.hk[dk],fp=dk.split('-'),lbl=(+fp[2])+'/'+fp[1]+'/'+fp[0];
     var prom=Math.round((d.promGlobal||0)*1000)/10;
