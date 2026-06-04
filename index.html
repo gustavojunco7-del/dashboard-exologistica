@@ -1652,7 +1652,7 @@ async function ingUpsert(rows){
 
 // ── Parse Excel ───────────────────────────────────────────────────────────────
 function ingParseExcel(buf){
-  var wb=XLSX.read(buf,{type:'array',cellDates:true});
+  var wb=XLSX.read(buf,{type:'array',cellDates:false});
   var grouped={};
 
   ['NACIONAL','IMPORTADO'].forEach(function(sh){
@@ -1670,8 +1670,15 @@ function ingParseExcel(buf){
       if(!grouped[key]){
         var fechaStr=null;
         if(row['Fecha de llegada']){
-          var d=new Date(row['Fecha de llegada']);
-          if(!isNaN(d))fechaStr=d.toISOString().slice(0,10);
+          var fv=row['Fecha de llegada'];
+          var d=null;
+          if(typeof fv==='number'){
+            // Excel serial date
+            d=new Date(Math.round((fv-25569)*86400*1000));
+          } else {
+            d=new Date(fv);
+          }
+          if(d&&!isNaN(d))fechaStr=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
         }
         var mes=parseInt(row['MES'])||null;
         if(!mes&&fechaStr)mes=parseInt(fechaStr.split('-')[1]);
