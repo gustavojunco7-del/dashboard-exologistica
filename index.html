@@ -352,7 +352,8 @@ function analyzePickDay(raw,dk){
       var dead=preGap+inter,exc=Math.max(0,dead-BRK());
       var elap=Math.max(0,Math.round((times[n-1]-sd)/60000));
       var prod=Math.max(0,elap-dead),iph=prod>0?Math.round(n/(prod/60)*10)/10:0;
-      users.push({user:user,items:n,units:Math.round(units),first:fmtT(times[0]),last:fmtT(times[n-1]),preGap:preGap,inter:inter,dead:dead,allowed:BRK(),exc:exc,prod:prod,iph:iph});
+      var elapsedMin=n>1?Math.round((times[n-1]-times[0])/60000):0;
+      users.push({user:user,items:n,units:Math.round(units),first:fmtT(times[0]),last:fmtT(times[n-1]),preGap:preGap,inter:inter,dead:dead,allowed:BRK(),exc:exc,prod:prod,iph:iph,elapsedMin:elapsedMin});
     });
     users.sort(function(a,b){return b.exc-a.exc;});
     result[sh]=users;
@@ -683,8 +684,8 @@ function pickRanking(){
   Object.keys(DB.pick).forEach(function(dk){
     ['TM','TT','TN'].forEach(function(sh){
       (DB.pick[dk][sh]||[]).forEach(function(u){
-        if(!map[u.user])map[u.user]={user:u.user,days:0,items:0,units:0,iph_s:0,dead:0,exc:0,prod:0};
-        var r=map[u.user];r.days++;r.items+=u.items;r.units+=u.units;r.iph_s+=u.iph;r.dead+=u.dead;r.exc+=u.exc;r.prod+=u.prod;
+        if(!map[u.user])map[u.user]={user:u.user,days:0,items:0,units:0,iph_s:0,dead:0,exc:0,prod:0,elapsed:0};
+        var r=map[u.user];r.days++;r.items+=u.items;r.units+=u.units;r.iph_s+=u.iph;r.dead+=u.dead;r.exc+=u.exc;r.prod+=u.prod;r.elapsed+=(u.elapsedMin||0);
       });
     });
   });
@@ -751,7 +752,9 @@ function renderPickRanking(){
   var worst=ranking.map(function(r,i){
     var m=i===0?'🥇':i===1?'🥈':i===2?'🥉':(i+1)+'';
     var hsProd=Math.round(r.prod/60*10)/10;
+    var hsDisp=Math.round(r.elapsed/60*10)/10;
     return '<tr><td>'+m+'</td><td class="tl">'+r.user+'</td><td>'+r.days+'</td><td>'+r.items.toLocaleString('es-AR')+'</td>'+
+      '<td>'+hsDisp+' hs</td>'+
       '<td><strong style="color:var(--green)">'+hsProd+' hs</strong></td>'+
       '<td><strong>'+r.avg_iph+'</strong></td>'+
       '<td><strong style="color:'+(r.exc>0?'var(--red)':'var(--green)')+'">'+r.exc+' min</strong></td>'+
@@ -760,15 +763,17 @@ function renderPickRanking(){
   var best=ranking.slice().sort(function(a,b){return b.avg_iph-a.avg_iph;}).map(function(r,i){
     var m=i===0?'🥇':i===1?'🥈':i===2?'🥉':(i+1)+'';
     var hsProd2=Math.round(r.prod/60*10)/10;
+    var hsDisp2=Math.round(r.elapsed/60*10)/10;
     return '<tr><td>'+m+'</td><td class="tl">'+r.user+'</td><td>'+r.days+'</td><td>'+r.items.toLocaleString('es-AR')+'</td>'+
+      '<td>'+hsDisp2+' hs</td>'+
       '<td><strong style="color:var(--green)">'+hsProd2+' hs</strong></td>'+
       '<td><strong class="ok">'+r.avg_iph+'</strong></td><td>'+r.exc+' min</td><td>'+r.pct+'%</td></tr>';
   }).join('');
   document.getElementById('main').innerHTML=
     '<div class="sec-t">🔴 Mayor Tiempo Excedente</div>'+
-    mkTable('Ranking · '+fmtMonth(CUR),'<tr><th>#</th><th>Usuario</th><th>Días</th><th>Items</th><th>Hs Productivas</th><th>Items/h</th><th>Excedente acum.</th><th>T.Muerto</th><th>%</th></tr>',worst)+
+    mkTable('Ranking · '+fmtMonth(CUR),'<tr><th>#</th><th>Usuario</th><th>Días</th><th>Items</th><th>Hs Disponibles</th><th>Hs Productivas</th><th>Productividad</th><th>Excedente acum.</th><th>T.Muerto</th><th>%</th></tr>',worst)+
     '<div class="sec-t">🟢 Mayor Productividad</div>'+
-    mkTable('Items/hora promedio','<tr><th>#</th><th>Usuario</th><th>Días</th><th>Items</th><th>Hs Productivas</th><th>Items/h</th><th>Excedente acum.</th><th>%</th></tr>',best);
+    mkTable('Items/hora promedio','<tr><th>#</th><th>Usuario</th><th>Días</th><th>Items</th><th>Hs Disponibles</th><th>Hs Productivas</th><th>Productividad</th><th>Excedente acum.</th><th>%</th></tr>',best);
 }
 function renderPickDias(){
   var days=Object.keys(DB.pick).filter(function(dk){return dk.indexOf(CUR)===0;}).sort();
