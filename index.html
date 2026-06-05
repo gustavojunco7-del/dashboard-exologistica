@@ -750,20 +750,25 @@ function renderPickRanking(){
   if(!ranking.length){document.getElementById('main').innerHTML='<div class="no-data">Sin datos</div>';return;}
   var worst=ranking.map(function(r,i){
     var m=i===0?'🥇':i===1?'🥈':i===2?'🥉':(i+1)+'';
-    return '<tr><td>'+m+'</td><td class="tl">'+r.user+'</td><td>'+r.days+'</td><td>'+r.items.toLocaleString('es-AR')+'</td><td>'+r.avg_iph+'</td>'+
+    var hsProd=Math.round(r.prod/60*10)/10;
+    return '<tr><td>'+m+'</td><td class="tl">'+r.user+'</td><td>'+r.days+'</td><td>'+r.items.toLocaleString('es-AR')+'</td>'+
+      '<td><strong style="color:var(--green)">'+hsProd+' hs</strong></td>'+
+      '<td><strong>'+r.avg_iph+'</strong></td>'+
       '<td><strong style="color:'+(r.exc>0?'var(--red)':'var(--green)')+'">'+r.exc+' min</strong></td>'+
       '<td>'+Math.round(r.dead/60*10)/10+' hs</td><td>'+r.pct+'%</td></tr>';
   }).join('');
   var best=ranking.slice().sort(function(a,b){return b.avg_iph-a.avg_iph;}).map(function(r,i){
     var m=i===0?'🥇':i===1?'🥈':i===2?'🥉':(i+1)+'';
+    var hsProd2=Math.round(r.prod/60*10)/10;
     return '<tr><td>'+m+'</td><td class="tl">'+r.user+'</td><td>'+r.days+'</td><td>'+r.items.toLocaleString('es-AR')+'</td>'+
+      '<td><strong style="color:var(--green)">'+hsProd2+' hs</strong></td>'+
       '<td><strong class="ok">'+r.avg_iph+'</strong></td><td>'+r.exc+' min</td><td>'+r.pct+'%</td></tr>';
   }).join('');
   document.getElementById('main').innerHTML=
     '<div class="sec-t">🔴 Mayor Tiempo Excedente</div>'+
-    mkTable('Ranking · '+fmtMonth(CUR),'<tr><th>#</th><th>Usuario</th><th>Días</th><th>Items</th><th>Prom i/h</th><th>Excedente acum.</th><th>T.Muerto</th><th>%</th></tr>',worst)+
+    mkTable('Ranking · '+fmtMonth(CUR),'<tr><th>#</th><th>Usuario</th><th>Días</th><th>Items</th><th>Hs Productivas</th><th>Items/h</th><th>Excedente acum.</th><th>T.Muerto</th><th>%</th></tr>',worst)+
     '<div class="sec-t">🟢 Mayor Productividad</div>'+
-    mkTable('Items/hora promedio','<tr><th>#</th><th>Usuario</th><th>Días</th><th>Items</th><th>Prom i/h</th><th>Excedente acum.</th><th>%</th></tr>',best);
+    mkTable('Items/hora promedio','<tr><th>#</th><th>Usuario</th><th>Días</th><th>Items</th><th>Hs Productivas</th><th>Items/h</th><th>Excedente acum.</th><th>%</th></tr>',best);
 }
 function renderPickDias(){
   var days=Object.keys(DB.pick).filter(function(dk){return dk.indexOf(CUR)===0;}).sort();
@@ -860,7 +865,10 @@ function renderCamResumen(){
       (sub?'<div style="font-size:10px;color:var(--muted);margin-top:3px">'+sub+'</div>':'')+
       '</div>';
   }
-  html+=kpi('TOTAL UNIDADES MES',filtU.toLocaleString('es-AR'),catFil!=='TODAS'?'Filtrado: '+catFil:days.length+' días','var(--cam)');
+  var calUdsKpi=0;if(DB.cal){Object.values(DB.cal).forEach(function(c){if(c.mes_key===CUR&&c.totales)calUdsKpi+=(c.totales.fisica||0);});}
+  var totalCamaraKpi=filtU+(catFil==='TODAS'?calUdsKpi:0);
+  var kpiSub=catFil==='TODAS'&&calUdsKpi>0?'Prod. '+filtU.toLocaleString('es-AR')+' + Cal. '+calUdsKpi.toLocaleString('es-AR'):(catFil!=='TODAS'?'Filtrado: '+catFil:days.length+' días');
+  html+=kpi('TOTAL UNIDADES MES',totalCamaraKpi.toLocaleString('es-AR'),kpiSub,'var(--cam)');
   html+=kpi('TOTAL TRÁMITES',filtT.toLocaleString('es-AR'),'');
   html+=kpi('PROMEDIO DIARIO',promDia.toLocaleString('es-AR'),'por día con actividad');
   html+=kpi('DÍAS CON ACTIVIDAD',daysWithData,'de '+days.length+' días cargados');
@@ -1228,6 +1236,7 @@ async function changeMonth(){
   CUR=document.getElementById('hdrMonth').value;SEL=null;ldr(1,'Cargando...');
   DB[MOD]=await sbGet(MOD,CUR);
   if(MOD==='cam'){
+    DB.cal={};await calLoad(CUR);
     try{var lsOut=localStorage.getItem('cam_out_'+CUR);if(lsOut)window.CAM_OUT=+lsOut;}catch(e){}
     var savedOut=await sbGetOut(CUR);if(savedOut)window.CAM_OUT=savedOut;
   }
@@ -2174,7 +2183,8 @@ async function confirmCalSave(nro, fecha, articulo){
 // ── Render Resumen Calidad ────────────────────────────────────────────────────
 async function renderCalResumen(){
   // Load if needed
-  if(!DB.cal){DB.cal={};await calLoad(CUR);}
+  var calKeys=Object.keys(DB.cal||{}).filter(function(k){return k.indexOf(CUR)>=0;});
+  if(!calKeys.length){DB.cal=DB.cal||{};await calLoad(CUR);}
   var casos=Object.values(DB.cal).filter(function(c){return c.mes_key===CUR;})
     .sort(function(a,b){return a.nro_caso-b.nro_caso;});
 
