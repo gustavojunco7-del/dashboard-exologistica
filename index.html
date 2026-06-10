@@ -835,7 +835,8 @@ function renderPickDayDetail(dk){
         '<td><strong>'+r.dead+' min</strong></td><td>'+xBdg(r.exc)+'</td><td>'+r.prod+' min</td>'+
         '<td><strong>'+r.iph+'</strong></td><td>'+barEl(pd)+'</td></tr>';
     }).join('');
-    html+=mkTable(s.l+' · '+u.length+' pickers',
+    var avgIph=u.length>0?Math.round(u.reduce(function(s,r){return s+r.iph;},0)/u.length*10)/10:0;
+    html+=mkTable(s.l+' · '+u.length+' pickers · <span style="color:var(--green);font-weight:800">'+avgIph+' líneas/h</span>',
       '<tr><th>Usuario</th><th>Items</th><th>Unid.</th><th>1er</th><th>Últ.</th><th>Gap Inicio</th><th>Breaks</th><th>T.Muerto</th><th>Excedente</th><th>T.Productivo</th><th>Items/h</th><th>%</th></tr>',rows);
   });
   document.getElementById('main').innerHTML=html;
