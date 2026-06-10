@@ -23,7 +23,7 @@ button{cursor:pointer;font-family:inherit}
 .mod-tab.mcam.active{color:var(--cam);border-bottom-color:var(--cam)}
 .mod-tab.mhk.active{color:var(--hk);border-bottom-color:var(--hk)}
 .mod-tab.ming.active{color:var(--ing);border-bottom-color:var(--ing)}
-.mod-tab.ming.active{color:var(--ing);border-bottom-color:var(--ing)}
+.mod-tab.mctl.active{color:#06b6d4;border-bottom-color:#06b6d4}
 .btn{padding:7px 15px;border-radius:7px;border:none;font-size:12px;font-weight:600;transition:.15s}
 .btn-p{background:var(--nike);color:#fff}.btn-p:hover{background:#e05e00}
 .btn-g{background:#16a34a;color:#fff;font-weight:700}.btn-g:hover{background:#15803d}
@@ -138,6 +138,7 @@ input[type=file]{display:none}
   <div class="mod-tab mcam" id="mtab-cam" onclick="switchModule('cam')">Cámara</div>
   <div class="mod-tab mhk" id="mtab-hk" onclick="switchModule('hk')">Housekeeping</div>
   <div class="mod-tab ming" id="mtab-ing" onclick="switchModule('ing')">Ingresos</div>
+  <div class="mod-tab mctl" id="mtab-ctl" onclick="switchModule('ctl')">Mesa Control</div>
 </div>
 
 <div class="layout">
@@ -151,6 +152,9 @@ input[type=file]{display:none}
     <div class="nav-item" id="nav-calperf" onclick="goPage('calperf')"><span class="ni">◈</span>Performance</div>
     <div class="nav-item" id="nav-ing" onclick="goPage('resumen')"><span class="ni">◈</span>Ingresos</div>
     <div class="nav-item" id="nav-ing-dias" onclick="goPage('ing-dias')"><span class="ni">◈</span>Ver por fecha</div>
+    <div class="nav-item" id="nav-ctl-resumen" onclick="goPage('ctl-resumen')"><span class="ni">◈</span>Resumen</div>
+    <div class="nav-item" id="nav-ctl-dias" onclick="goPage('ctl-dias')"><span class="ni">◈</span>Ver por día</div>
+    <div class="nav-item" id="nav-ctl-tendencias" onclick="goPage('ctl-tendencias')"><span class="ni">◈</span>Tendencias</div>
     <div class="nav-div"></div>
     <div class="sb-sec">Configuración</div>
     <div class="nav-item" id="nav-config" onclick="goPage('config')"><span class="ni">◈</span>Configuración</div>
@@ -266,9 +270,9 @@ function HKT(){return+(CFG.hk_target||0.95);}
 
 // ══ MODULE SWITCH ════════════════════════════════════════════════════════════
 function switchModule(mod){
-  MOD=mod;PAGE='resumen';SEL=null;
-  ['pick','cam','hk','ing'].forEach(function(m){document.getElementById('mtab-'+m).classList.toggle('active',m===mod);});
-  var labels={pick:'+ Cargar día',cam:'+ Cargar',hk:'+ Cargar auditoría',ing:'+ Cargar Excel'};
+  MOD=mod;PAGE=mod==='ctl'?'ctl-resumen':'resumen';SEL=null;
+  ['pick','cam','hk','ing','ctl'].forEach(function(m){document.getElementById('mtab-'+m).classList.toggle('active',m===mod);});
+  var labels={pick:'+ Cargar día',cam:'+ Cargar',hk:'+ Cargar auditoría',ing:'+ Cargar Excel',ctl:'+ Cargar Excel'};
   if(MOD==='cam')labels.cam=PAGE==='cal'?'+ Cargar calidad':'+ Cargar producción';
   document.getElementById('btnLoad').textContent=labels[mod]||'+ Cargar';
   updNav();
@@ -276,6 +280,10 @@ function switchModule(mod){
   if(MOD==='ing'){
     if(PAGE==='ing-dias'){renderIngresosDias();ldr(0);}
     else{renderIngResumen();ldr(0);}
+    return;
+  }
+  if(MOD==='ctl'){
+    renderCtlResumen();ldr(0);
     return;
   }
   updMS().then(function(){
@@ -425,7 +433,7 @@ function buildHKResult(entries){
 }
 
 // ══ LOAD FLOWS ═══════════════════════════════════════════════════════════════
-function doLoad(){checkPass(function(){if(MOD==='pick')showPickUpload();else if(MOD==='cam'&&PAGE==='cal')checkPass(function(){showCalLoad();});else if(MOD==='cam'&&PAGE==='calperf')checkPass(function(){showCalPerfLoad();});else if(MOD==='cam')showCamLoad();else if(MOD==='hk')showHKLoad();else showIngresosLoad();});}
+function doLoad(){checkPass(function(){if(MOD==='pick')showPickUpload();else if(MOD==='cam'&&PAGE==='cal')checkPass(function(){showCalLoad();});else if(MOD==='cam'&&PAGE==='calperf')checkPass(function(){showCalPerfLoad();});else if(MOD==='cam')showCamLoad();else if(MOD==='hk')showHKLoad();else if(MOD==='ctl')showCtlLoad();else showIngresosLoad();});}
 function checkPass(action){var p=prompt('Contraseña:');if(p===APP_PASS)action();else if(p!==null)toast('Contraseña incorrecta','err');}
 
 function showPickUpload(){
@@ -656,11 +664,17 @@ function parseHKExcel(text){
 // ══ RENDER ROUTER ════════════════════════════════════════════════════════════
 function render(){
   updateSB();
-  document.getElementById('btnExport').style.display=(MOD!=='ing'&&Object.keys(DB[MOD]||{}).length)?'inline-block':'none';
+  document.getElementById('btnExport').style.display=(MOD!=='ing'&&MOD!=='ctl'&&Object.keys(DB[MOD]||{}).length)?'inline-block':'none';
   if(PAGE==='config'){renderConfig();return;}
   if(MOD==='ing'){
     if(PAGE==='ing-dias')renderIngresosDias();
     else renderIngresosResumen();
+    return;
+  }
+  if(MOD==='ctl'){
+    if(PAGE==='ctl-resumen')renderCtlResumen();
+    else if(PAGE==='ctl-dias')renderCtlDias();
+    else if(PAGE==='ctl-tendencias')renderCtlTendencias();
     return;
   }
   var days=Object.keys(DB[MOD]).sort();
@@ -1408,10 +1422,282 @@ function renderPickTendencias(){
   });
 }
 
+// ══ MESA CONTROL ═══════════════════════════════════════════════════════════
+var DB_CTL = {}; // {fecha: {TM:[],TT:[],TN:[]}}
+var CTL_CIA_FILTER = 'TODAS';
+var OBJ_CTL = 200;
+var TOL_CTL = 20;
+
+function baseDateCTL(dt){
+  var h=dt.getHours();
+  if(h<6){var d=new Date(dt);d.setDate(d.getDate()-1);return d.toISOString().slice(0,10);}
+  return dt.toISOString().slice(0,10);
+}
+
+function turnoFromCTL(dt){
+  var h=dt.getHours();
+  if(h>=6&&h<14)return 'TM';
+  if(h>=14&&h<22)return 'TT';
+  return 'TN';
+}
+
+function showCtlLoad(){
+  document.getElementById('main').innerHTML=
+    '<div class="upload-area">'+
+    '<div class="drop-box" id="dropCtlBox" ondragover="event.preventDefault();this.classList.add(\'drag\')" ondragleave="this.classList.remove(\'drag\')" ondrop="onDropCtl(event)">'+
+    '<div class="drop-icon">📋</div>'+
+    '<div class="drop-t">Importar Excel de Mesa de Control</div>'+
+    '<div class="drop-s">Podés subir varios días de una vez</div>'+
+    '<button class="btn btn-p" onclick="document.getElementById(\'fiCtl\').click()">Seleccionar archivo</button>'+
+    '<input type="file" id="fiCtl" accept=".xlsx,.xls" onchange="readCtlFile(this.files[0])" style="display:none">'+
+    '</div></div>';
+}
+
+function onDropCtl(e){
+  e.preventDefault();
+  document.getElementById('dropCtlBox').classList.remove('drag');
+  if(e.dataTransfer.files[0])readCtlFile(e.dataTransfer.files[0]);
+}
+
+function readCtlFile(f){
+  var reader=new FileReader();
+  reader.onload=function(e){
+    ldr(1,'Procesando...');
+    try{
+      var wb=XLSX.read(e.target.result,{type:'array',cellDates:false});
+      var ws=wb.Sheets[wb.SheetNames[0]];
+      var rows=XLSX.utils.sheet_to_json(ws,{raw:false,defval:''});
+      processCtlRows(rows,f.name);
+    }catch(err){toast('Error leyendo archivo','err');ldr(0);}
+  };
+  reader.readAsArrayBuffer(f);
+}
+
+function processCtlRows(rows,fname){
+  // Parsear y agrupar por fecha base + turno + controlador
+  var grupos={}; // {dk: {TM:{user:{items,first,last}}, TT:{}, TN:{}}}
+  rows.forEach(function(r){
+    var fechaStr=r['FECHA HORA']||r['Fecha Hora']||r['fecha hora']||'';
+    if(!fechaStr)return;
+    var dt=new Date(fechaStr);
+    if(isNaN(dt.getTime()))return;
+    var dk=baseDateCTL(dt);
+    var turno=turnoFromCTL(dt);
+    var ctrl=(r['CONTROLADOR']||r['Controlador']||'').trim();
+    if(!ctrl)return;
+    var cant=parseFloat(String(r['CONTROLADO']||r['Controlado']||'0').replace(',','.'))||0;
+    var cia=(r['CIA']||r['Cia']||'').trim();
+
+    if(!grupos[dk])grupos[dk]={TM:{},TT:{},TN:{}};
+    if(!grupos[dk][turno][ctrl])grupos[dk][turno][ctrl]={items:0,first:dt,last:dt,cia:cia};
+    grupos[dk][turno][ctrl].items+=cant;
+    if(dt<grupos[dk][turno][ctrl].first)grupos[dk][turno][ctrl].first=dt;
+    if(dt>grupos[dk][turno][ctrl].last)grupos[dk][turno][ctrl].last=dt;
+    grupos[dk][turno][ctrl].cia=cia; // última CIA del usuario
+  });
+
+  // Convertir a array y calcular métricas
+  var TARGET=OBJ_CTL;
+  Object.keys(grupos).forEach(function(dk){
+    var dayData={TM:[],TT:[],TN:[]};
+    ['TM','TT','TN'].forEach(function(sh){
+      var shData=grupos[dk][sh];
+      Object.keys(shData).forEach(function(ctrl){
+        var u=shData[ctrl];
+        var mins=(u.last-u.first)/60000;
+        var hs=mins/60;
+        var iph=hs>0?Math.round(u.items/hs):u.items;
+        // Gap inicio: minutos desde inicio del turno hasta primer registro
+        var turnoStart={TM:6,TT:14,TN:22}[sh];
+        var startDt=new Date(u.first);
+        startDt.setHours(turnoStart,0,0,0);
+        var gap=Math.max(0,Math.round((u.first-startDt)/60000));
+        // Tiempo muerto aprox: duración total - items (cada item ~1 min)
+        var deadTotal=Math.max(0,Math.round(mins));
+        // Excedente: tiempo muerto sobre tolerancia (90+20=110 min)
+        var excTol=110;
+        var elapsedMin=Math.round(mins);
+        var exc=Math.max(0,elapsedMin+gap-TARGET); // simple: si no llega al target
+        var fmtH=function(d){return('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2);};
+        dayData[sh].push({
+          user:ctrl,
+          items:Math.round(u.items),
+          cia:u.cia,
+          first:fmtH(u.first),
+          last:fmtH(u.last),
+          gap:gap,
+          iph:iph,
+          pct:Math.min(100,Math.round(u.items/TARGET*100))
+        });
+      });
+      // Ordenar por items desc
+      dayData[sh].sort(function(a,b){return b.items-a.items;});
+    });
+    DB_CTL[dk]=dayData;
+  });
+
+  toast('✓ '+fname+' cargado — '+Object.keys(grupos).length+' días','ok');
+  PAGE='ctl-resumen';updNav();renderCtlResumen();ldr(0);
+}
+
+function renderCtlResumen(){
+  var days=Object.keys(DB_CTL).sort().reverse();
+  if(!days.length){
+    document.getElementById('main').innerHTML=
+      '<div class="upload-area"><div style="text-align:center">'+
+      '<div style="font-size:44px;margin-bottom:14px">📭</div>'+
+      '<div style="font-size:15px;font-weight:700;margin-bottom:8px">Sin datos cargados</div>'+
+      '<div style="color:var(--muted2);font-size:12px;margin-bottom:18px">Cargá el Excel de Mesa de Control</div>'+
+      '<button class="btn btn-p" onclick="doLoad()">+ Cargar Excel</button></div></div>';
+    return;
+  }
+
+  // Cards de días
+  var cardsHtml=days.map(function(dk){
+    var day=DB_CTL[dk];
+    var total=0,pickers=0;
+    ['TM','TT','TN'].forEach(function(sh){(day[sh]||[]).forEach(function(u){total+=u.items;pickers++;});});
+    var pct=Math.min(100,Math.round(total/(pickers||1)/OBJ_CTL*100));
+    var fp=dk.split('-');
+    var lbl=(+fp[2])+'/'+(+fp[1])+'/'+fp[0];
+    var color=pct>=90?'var(--green)':pct>=70?'var(--yellow)':'var(--red)';
+    return '<div class="day-card" onclick="ctlViewDay(\''+dk+'\')">'+
+      '<div class="dc-h"><div><div class="dc-d">'+lbl+'</div><div class="dc-n">'+total.toLocaleString('es-AR')+' bultos</div></div>'+
+      '<div style="text-align:right"><span style="font-size:12px;font-weight:700;color:'+color+'">'+pct+'% target</span></div></div>'+
+      '<div class="dc-b">'+['TM','TT','TN'].map(function(sh){var u=day[sh]||[];return '<div class="dc-stat"><div class="dc-stat-l">'+sh+'</div><div class="dc-stat-v">'+u.length+'</div></div>';}).join('')+'</div>'+
+      '<div class="dc-f"><span>Ver →</span></div></div>';
+  }).join('');
+
+  document.getElementById('main').innerHTML='<div style="padding:20px 0"><div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px">'+cardsHtml+'</div></div>';
+}
+
+function ctlViewDay(dk){
+  document.getElementById('main').innerHTML=renderCtlDayDetail(dk);
+}
+
+function renderCtlDias(){
+  renderCtlResumen();
+}
+
+function renderCtlDayDetail(dk){
+  var day=DB_CTL[dk];
+  if(!day)return'';
+  var fp=dk.split('-');
+  var lbl=(+fp[2])+'/'+(+fp[1])+'/'+fp[0];
+  var TURNOS=['TM','TT','TN'];
+  var TLABELS={TM:'Turno Mañana 06-14',TT:'Turno Tarde 14-22',TN:'Turno Noche 22-06'};
+  var html='<div style="padding:20px 0">'+
+    '<div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">'+
+    '<button class="btn btn-o btn-sm" onclick="renderCtlResumen()">← Volver</button>'+
+    '<span style="font-size:14px;font-weight:700">Mesa de Control — '+lbl+'</span></div>';
+
+  TURNOS.forEach(function(sh){
+    var users=day[sh]||[];
+    if(!users.length)return;
+    var totalItems=users.reduce(function(s,u){return s+u.items;},0);
+    var avgItems=Math.round(totalItems/users.length);
+    var avgIph=Math.round(users.reduce(function(s,u){return s+u.iph;},0)/users.length);
+    html+='<div style="background:var(--panel);border:1px solid var(--border);border-radius:10px;margin-bottom:16px;overflow:hidden">'+
+      '<div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">'+
+        '<div style="font-size:13px;font-weight:700">'+TLABELS[sh]+' · '+users.length+' operarios</div>'+
+        '<div style="font-size:12px;color:var(--muted2)">Prom: <span style="color:var(--green);font-weight:700">'+avgItems+' bultos</span> · '+avgIph+' b/h</div>'+
+      '</div>'+
+      '<table style="width:100%;border-collapse:collapse">'+
+      '<thead><tr>'+
+        '<th style="padding:8px 14px;text-align:left;font-size:10px;color:var(--muted2);text-transform:uppercase;border-bottom:1px solid var(--border)">Operario</th>'+
+        '<th style="padding:8px 14px;text-align:left;font-size:10px;color:var(--muted2);text-transform:uppercase;border-bottom:1px solid var(--border)">CIA</th>'+
+        '<th style="padding:8px 14px;text-align:left;font-size:10px;color:var(--muted2);text-transform:uppercase;border-bottom:1px solid var(--border)">Bultos</th>'+
+        '<th style="padding:8px 14px;text-align:left;font-size:10px;color:var(--muted2);text-transform:uppercase;border-bottom:1px solid var(--border)">1er reg.</th>'+
+        '<th style="padding:8px 14px;text-align:left;font-size:10px;color:var(--muted2);text-transform:uppercase;border-bottom:1px solid var(--border)">Último</th>'+
+        '<th style="padding:8px 14px;text-align:left;font-size:10px;color:var(--muted2);text-transform:uppercase;border-bottom:1px solid var(--border)">B/hora</th>'+
+        '<th style="padding:8px 14px;text-align:left;font-size:10px;color:var(--muted2);text-transform:uppercase;border-bottom:1px solid var(--border)">% Target</th>'+
+      '</tr></thead><tbody>';
+
+    users.forEach(function(u){
+      var pctColor=u.pct>=90?'var(--green)':u.pct>=70?'var(--yellow)':'var(--red)';
+      var barW=Math.min(100,u.pct);
+      html+='<tr style="border-bottom:1px solid #0d1a2a">'+
+        '<td style="padding:10px 14px;font-weight:600">'+u.user+'</td>'+
+        '<td style="padding:10px 14px;color:var(--muted2);font-size:12px">'+u.cia+'</td>'+
+        '<td style="padding:10px 14px;font-weight:700;font-size:14px">'+u.items.toLocaleString('es-AR')+'</td>'+
+        '<td style="padding:10px 14px;color:var(--muted2);font-size:12px">'+u.first+'</td>'+
+        '<td style="padding:10px 14px;color:var(--muted2);font-size:12px">'+u.last+'</td>'+
+        '<td style="padding:10px 14px;font-weight:600">'+u.iph+'</td>'+
+        '<td style="padding:10px 14px">'+
+          '<div style="display:flex;align-items:center;gap:8px">'+
+          '<div style="flex:1;height:6px;background:var(--border);border-radius:3px;overflow:hidden">'+
+          '<div style="width:'+barW+'%;height:100%;background:'+pctColor+';border-radius:3px"></div></div>'+
+          '<span style="font-weight:700;color:'+pctColor+';min-width:36px">'+u.pct+'%</span></div></td>'+
+      '</tr>';
+    });
+    html+='</tbody></table></div>';
+  });
+  html+='</div>';
+  return html;
+}
+
+function renderCtlTendencias(){
+  var days=Object.keys(DB_CTL).sort();
+  if(!days.length){
+    document.getElementById('main').innerHTML='<div style="padding:40px;color:var(--muted2);text-align:center">Sin datos cargados.</div>';
+    return;
+  }
+  var labels=[];
+  var dataBultos={TM:[],TT:[],TN:[]};
+  days.forEach(function(dk){
+    var day=DB_CTL[dk];
+    var fp=dk.split('-');
+    labels.push((+fp[2])+'/'+fp[1]);
+    ['TM','TT','TN'].forEach(function(sh){
+      var users=day[sh]||[];
+      if(!users.length){dataBultos[sh].push(null);return;}
+      var avg=Math.round(users.reduce(function(s,u){return s+u.items;},0)/users.length);
+      dataBultos[sh].push(avg);
+    });
+  });
+
+  var html='<div style="padding:20px 0">'+
+    '<div style="background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:20px">'+
+    '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">'+
+    '<div style="font-size:13px;font-weight:700">Productividad Mesa de Control por Turno</div>'+
+    '<div style="font-size:11px;color:var(--muted2)">Bultos promedio por operario · Objetivo: <span style="color:var(--green);font-weight:700">200 bultos</span></div>'+
+    '</div><canvas id="chartCtl" height="90"></canvas></div></div>';
+
+  document.getElementById('main').innerHTML=html;
+
+  var colors={TM:{border:'#FF6B00',bg:'rgba(255,107,0,0.15)'},TT:{border:'#3b82f6',bg:'rgba(59,130,246,0.15)'},TN:{border:'#a78bfa',bg:'rgba(167,139,250,0.15)'}};
+  var tlabels={TM:'Mañana 06-14',TT:'Tarde 14-22',TN:'Noche 22-06'};
+  new Chart(document.getElementById('chartCtl'),{
+    type:'line',
+    data:{
+      labels:labels,
+      datasets:['TM','TT','TN'].map(function(sh){return{
+        label:tlabels[sh],data:dataBultos[sh],
+        borderColor:colors[sh].border,backgroundColor:colors[sh].bg,
+        borderWidth:2,pointRadius:4,tension:0.3,spanGaps:true
+      };}).concat([{
+        label:'Objetivo (200)',
+        data:labels.map(function(){return 200;}),
+        borderColor:'rgba(34,197,94,0.6)',borderWidth:2,borderDash:[6,4],pointRadius:0,fill:false
+      }])
+    },
+    options:{
+      responsive:true,
+      interaction:{mode:'index',intersect:false},
+      plugins:{legend:{labels:{color:'#94a3b8',font:{size:11}}},tooltip:{backgroundColor:'#1a2235',titleColor:'#e2e8f0',bodyColor:'#94a3b8',borderColor:'#1e2d45',borderWidth:1}},
+      scales:{
+        x:{ticks:{color:'#64748b',font:{size:11}},grid:{color:'#1e2d45'}},
+        y:{ticks:{color:'#64748b',font:{size:11}},grid:{color:'#1e2d45'},beginAtZero:true,
+          title:{display:true,text:'Bultos / operario',color:'#64748b',font:{size:11}}}
+      }
+    }
+  });
+}
+
 function goPage(p){PAGE=p;SEL=null;updNav();render();}
 function updNav(){
-  var pages={pick:['resumen','ranking','dias','tendencias','config'],cam:['resumen','dias','cal','calperf','config'],hk:['resumen','dias','config'],ing:['resumen','ing-dias']};
-  ['resumen','ranking','dias','tendencias','cal','calperf','config','ing','ing-dias'].forEach(function(p){
+  var pages={pick:['resumen','ranking','dias','tendencias','config'],cam:['resumen','dias','cal','calperf','config'],hk:['resumen','dias','config'],ing:['resumen','ing-dias'],ctl:['ctl-resumen','ctl-dias','ctl-tendencias','config']};
+  ['resumen','ranking','dias','tendencias','cal','calperf','config','ing','ing-dias','ctl-resumen','ctl-dias','ctl-tendencias'].forEach(function(p){
     var el=document.getElementById('nav-'+p);if(!el)return;
     el.style.display=(pages[MOD]||[]).indexOf(p)>=0?'flex':'none';
     el.classList.toggle('active',p===PAGE);
