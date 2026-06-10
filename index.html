@@ -459,7 +459,7 @@ function readPickFile(f){
         ldr(0);
         var opts=dates.map(function(dk){
           var fp=dk.split('-'),lbl=(+fp[2])+'/'+fp[1]+'/'+fp[0];
-          var ex=DB.pick[dk]?'<span style="color:var(--yellow);font-size:10px"> (se sobreescribirá)</span>':'';
+          var ex=DB.pick[dk]?'<span style="color:var(--green);font-size:10px"> (se fusionará)</span>':'';
           return '<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-radius:9px;border:1px solid var(--border);cursor:pointer;background:var(--panel2);margin-bottom:7px" onclick="loadPickDate(window._raw,\''+dk+'\')">'+
             '<div><div style="font-weight:700;font-size:13px">'+lbl+ex+'</div><div style="font-size:11px;color:var(--muted2)">'+dMap[dk]+' registros</div></div>'+
             '<div style="color:var(--accent);font-size:16px">›</div></div>';
@@ -483,10 +483,38 @@ async function loadPickDate(raw,dk){
     if(!total){toast('Sin registros para esa fecha','err');ldr(0);return;}
     if(DB.pick[dk]){
       ['TM','TT','TN'].forEach(function(sh){
-        var exU={};
-        (DB.pick[dk][sh]||[]).forEach(function(u){exU[u.user]=u;});
-        (result[sh]||[]).forEach(function(u){exU[u.user]=u;});
-        result[sh]=Object.values(exU).sort(function(a,b){return b.exc-a.exc;});
+        var existing=DB.pick[dk][sh]||[];
+        var incoming=result[sh]||[];
+        // Si el turno nuevo tiene MÁS usuarios que el existente, usar el nuevo
+        // Si el existente tiene MÁS, mantener el existente
+        // Para TN: siempre mergear sumando (puede venir en dos partes)
+        if(sh==='TN'){
+          var exU={};
+          existing.forEach(function(u){exU[u.user]=u;});
+          incoming.forEach(function(u){
+            if(exU[u.user]){
+              var ex=exU[u.user];
+              // Tomar el rango más amplio de tiempo
+              var f=ex.first&&u.first?(ex.first<u.first?ex.first:u.first):ex.first||u.first;
+              var l=ex.last&&u.last?(ex.last>u.last?ex.last:u.last):ex.last||u.last;
+              exU[u.user]=Object.assign({},ex,{
+                items:ex.items+u.items,
+                units:(ex.units||0)+(u.units||0),
+                first:f, last:l
+              });
+              // Recalcular iph con nuevo rango
+              var mins=f&&l?(l-f)/60000:0;
+              var hs=mins/60;
+              exU[u.user].iph=hs>0?Math.round(exU[u.user].items/hs*10)/10:exU[u.user].items;
+            } else {
+              exU[u.user]=u;
+            }
+          });
+          result[sh]=Object.values(exU).sort(function(a,b){return b.exc-a.exc;});
+        } else {
+          // TM y TT: usar el que tenga más registros
+          result[sh]=incoming.length>=existing.length?incoming:existing;
+        }
       });
     }
     ldr(1,'Guardando...');
