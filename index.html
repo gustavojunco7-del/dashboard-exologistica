@@ -1464,11 +1464,11 @@ function readCtlFile(f){
   reader.onload=function(e){
     ldr(1,'Procesando...');
     try{
-      var wb=XLSX.read(e.target.result,{type:'array',cellDates:false});
+      var wb=XLSX.read(e.target.result,{type:'array',cellDates:true});
       var ws=wb.Sheets[wb.SheetNames[0]];
-      var rows=XLSX.utils.sheet_to_json(ws,{raw:false,defval:''});
+      var rows=XLSX.utils.sheet_to_json(ws,{raw:false,defval:'',dateNF:'dd/mm/yyyy hh:mm:ss'});
       processCtlRows(rows,f.name);
-    }catch(err){toast('Error leyendo archivo','err');ldr(0);}
+    }catch(err){toast('Error leyendo archivo: '+err.message,'err');ldr(0);}
   };
   reader.readAsArrayBuffer(f);
 }
@@ -1477,10 +1477,20 @@ function processCtlRows(rows,fname){
   // Parsear y agrupar por fecha base + turno + controlador
   var grupos={}; // {dk: {TM:{user:{items,first,last}}, TT:{}, TN:{}}}
   rows.forEach(function(r){
-    var fechaStr=r['FECHA HORA']||r['Fecha Hora']||r['fecha hora']||'';
-    if(!fechaStr)return;
-    var dt=new Date(fechaStr);
-    if(isNaN(dt.getTime()))return;
+    var fechaVal=r['FECHA HORA']||r['Fecha Hora']||r['fecha hora']||'';
+    if(!fechaVal)return;
+    var dt;
+    if(fechaVal instanceof Date){
+      dt=fechaVal;
+    } else {
+      // Intentar parsear string — formato "01/06/2026 06:38:02" o "2026-06-01 06:38:02"
+      var s=String(fechaVal).trim();
+      // dd/mm/yyyy hh:mm:ss
+      var m=s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2}):?(\d{2})?/);
+      if(m){dt=new Date(+m[3],+m[2]-1,+m[1],+m[4],+m[5],+(m[6]||0));}
+      else{dt=new Date(s);}
+    }
+    if(!dt||isNaN(dt.getTime()))return;
     var dk=baseDateCTL(dt);
     var turno=turnoFromCTL(dt);
     var ctrl=(r['CONTROLADOR']||r['Controlador']||'').trim();
