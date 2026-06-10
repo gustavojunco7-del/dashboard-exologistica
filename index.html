@@ -107,6 +107,7 @@ input[type=file]{display:none}
 @keyframes spin{to{transform:rotate(360deg)}}
 ::-webkit-scrollbar{width:5px;height:5px}::-webkit-scrollbar-track{background:var(--bg)}::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
 </style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 </head>
 <body>
 <div id="ldr"><div class="spin"></div><span style="color:var(--muted2);font-size:12px" id="ldrTxt">Cargando...</span></div>
@@ -145,6 +146,7 @@ input[type=file]{display:none}
     <div class="nav-item active" id="nav-resumen" onclick="goPage('resumen')"><span class="ni">◈</span>Resumen mensual</div>
     <div class="nav-item" id="nav-ranking" onclick="goPage('ranking')"><span class="ni">◈</span>Ranking mensual</div>
     <div class="nav-item" id="nav-dias" onclick="goPage('dias')"><span class="ni">◈</span>Ver por día</div>
+    <div class="nav-item" id="nav-tendencias" onclick="goPage('tendencias')"><span class="ni">◈</span>Tendencias</div>
     <div class="nav-item" id="nav-cal" onclick="goPage('cal')"><span class="ni">◈</span>Calidad</div>
     <div class="nav-item" id="nav-calperf" onclick="goPage('calperf')"><span class="ni">◈</span>Performance</div>
     <div class="nav-item" id="nav-ing" onclick="goPage('resumen')"><span class="ni">◈</span>Ingresos</div>
@@ -675,6 +677,7 @@ function render(){
   if(MOD==='pick'){
     if(PAGE==='resumen')renderPickResumen();
     else if(PAGE==='ranking')renderPickRanking();
+    else if(PAGE==='tendencias')renderPickTendencias();
     else if(PAGE==='dias')SEL&&DB.pick[SEL]?renderPickDayDetail(SEL):renderPickDias();
   }else if(MOD==='cam'){
     if(PAGE==='resumen')renderCamResumen();
@@ -1254,10 +1257,161 @@ function mkTable(title,thead,tbody){
   return '<div class="tw"><div class="th2"><h3>'+title+'</h3></div>'+
     '<table><thead>'+thead+'</thead><tbody>'+tbody+'</tbody></table></div>';
 }
+function renderPickTendencias(){
+  var days=Object.keys(DB.pick).filter(function(dk){return dk.indexOf(CUR)===0;}).sort();
+  if(!days.length){
+    document.getElementById('main').innerHTML='<div style="padding:40px;color:var(--muted2);text-align:center">Sin datos cargados para el mes actual.</div>';
+    return;
+  }
+
+  // Calcular datos por día y turno
+  var labels=[];
+  var dataProd={TM:[],TT:[],TN:[]};
+  var dataMuerto={TM:[],TT:[],TN:[]};
+  var TURNOS=['TM','TT','TN'];
+  var TOLERANCIA=20; // min excedente tolerado
+  var OBJ_LINEAS=200; // líneas objetivo por operario por turno
+
+  days.forEach(function(dk){
+    var day=DB.pick[dk];
+    var fp=dk.split('-');
+    labels.push((+fp[2])+'/'+fp[1]);
+    TURNOS.forEach(function(sh){
+      var users=day[sh]||[];
+      if(!users.length){
+        dataProd[sh].push(null);
+        dataMuerto[sh].push(null);
+        return;
+      }
+      // Productividad: promedio de líneas totales por operario
+      var avgLineas=Math.round(users.reduce(function(s,u){return s+u.items;},0)/users.length);
+      dataProd[sh].push(avgLineas);
+      // Tiempo muerto: promedio de excedente por operario (ya calculado en u.exc)
+      var avgExc=Math.round(users.reduce(function(s,u){return s+u.exc;},0)/users.length);
+      dataMuerto[sh].push(avgExc);
+    });
+  });
+
+  var html='<div style="padding:20px 0">'+
+    '<div style="display:grid;gap:24px">'+
+
+    // CARD 1: Productividad
+    '<div style="background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:20px">'+
+      '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">'+
+        '<div style="font-size:13px;font-weight:700">Productividad por Turno</div>'+
+        '<div style="font-size:11px;color:var(--muted2)">Líneas promedio por operario · Objetivo: <span style="color:var(--green);font-weight:700">200 líneas</span></div>'+
+      '</div>'+
+      '<canvas id="chartProd" height="90"></canvas>'+
+    '</div>'+
+
+    // CARD 2: Tiempos muertos
+    '<div style="background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:20px">'+
+      '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">'+
+        '<div style="font-size:13px;font-weight:700">Excedente de Tiempo Muerto por Turno</div>'+
+        '<div style="font-size:11px;color:var(--muted2)">Minutos promedio sobre los 90 min permitidos · Tolerancia: <span style="color:var(--yellow);font-weight:700">20 min</span></div>'+
+      '</div>'+
+      '<canvas id="chartMuerto" height="90"></canvas>'+
+    '</div>'+
+
+    '</div></div>';
+
+  document.getElementById('main').innerHTML=html;
+
+  // Colores por turno
+  var colors={
+    TM:{border:'#FF6B00',bg:'rgba(255,107,0,0.15)'},
+    TT:{border:'#3b82f6',bg:'rgba(59,130,246,0.15)'},
+    TN:{border:'#a78bfa',bg:'rgba(167,139,250,0.15)'}
+  };
+  var labels_turno={TM:'Mañana 06-14',TT:'Tarde 14-22',TN:'Noche 22-06'};
+
+  // Chart 1: Productividad
+  new Chart(document.getElementById('chartProd'),{
+    type:'line',
+    data:{
+      labels:labels,
+      datasets:TURNOS.map(function(sh){return{
+        label:labels_turno[sh],
+        data:dataProd[sh],
+        borderColor:colors[sh].border,
+        backgroundColor:colors[sh].bg,
+        borderWidth:2,
+        pointRadius:4,
+        pointHoverRadius:6,
+        tension:0.3,
+        spanGaps:true
+      };}).concat([{
+        label:'Objetivo (200)',
+        data:labels.map(function(){return 200;}),
+        borderColor:'rgba(34,197,94,0.6)',
+        borderWidth:2,
+        borderDash:[6,4],
+        pointRadius:0,
+        fill:false,
+        tension:0
+      }])
+    },
+    options:{
+      responsive:true,
+      interaction:{mode:'index',intersect:false},
+      plugins:{
+        legend:{labels:{color:'#94a3b8',font:{size:11}}},
+        tooltip:{backgroundColor:'#1a2235',titleColor:'#e2e8f0',bodyColor:'#94a3b8',borderColor:'#1e2d45',borderWidth:1}
+      },
+      scales:{
+        x:{ticks:{color:'#64748b',font:{size:11}},grid:{color:'#1e2d45'}},
+        y:{ticks:{color:'#64748b',font:{size:11}},grid:{color:'#1e2d45'},beginAtZero:true,
+          title:{display:true,text:'Líneas / operario',color:'#64748b',font:{size:11}}}
+      }
+    }
+  });
+
+  // Chart 2: Tiempo muerto
+  new Chart(document.getElementById('chartMuerto'),{
+    type:'line',
+    data:{
+      labels:labels,
+      datasets:TURNOS.map(function(sh){return{
+        label:labels_turno[sh],
+        data:dataMuerto[sh],
+        borderColor:colors[sh].border,
+        backgroundColor:colors[sh].bg,
+        borderWidth:2,
+        pointRadius:4,
+        pointHoverRadius:6,
+        tension:0.3,
+        spanGaps:true
+      };}).concat([{
+        label:'Tolerancia (20 min)',
+        data:labels.map(function(){return TOLERANCIA;}),
+        borderColor:'rgba(245,158,11,0.6)',
+        borderWidth:2,
+        borderDash:[6,4],
+        pointRadius:0,
+        fill:false,
+        tension:0
+      }])
+    },
+    options:{
+      responsive:true,
+      interaction:{mode:'index',intersect:false},
+      plugins:{
+        legend:{labels:{color:'#94a3b8',font:{size:11}}},
+        tooltip:{backgroundColor:'#1a2235',titleColor:'#e2e8f0',bodyColor:'#94a3b8',borderColor:'#1e2d45',borderWidth:1}
+      },
+      scales:{
+        x:{ticks:{color:'#64748b',font:{size:11}},grid:{color:'#1e2d45'}},
+        y:{ticks:{color:'#64748b',font:{size:11}},grid:{color:'#1e2d45'},beginAtZero:true,
+          title:{display:true,text:'Min excedente / operario',color:'#64748b',font:{size:11}}}
+      }
+    }
+  });
+}
+
 function goPage(p){PAGE=p;SEL=null;updNav();render();}
 function updNav(){
-  var pages={pick:['resumen','ranking','dias','config'],cam:['resumen','dias','cal','calperf','config'],hk:['resumen','dias','config'],ing:['resumen','ing-dias']};
-  ['resumen','ranking','dias','cal','calperf','config','ing','ing-dias'].forEach(function(p){
+  var pages={pick:['resumen','ranking','dias','tendencias','config'],cam:['resumen','dias','cal','calperf','config'],hk:['resumen','dias','config'],ing:['resumen','ing-dias']};
+  ['resumen','ranking','dias','tendencias','cal','calperf','config','ing','ing-dias'].forEach(function(p){
     var el=document.getElementById('nav-'+p);if(!el)return;
     el.style.display=(pages[MOD]||[]).indexOf(p)>=0?'flex':'none';
     el.classList.toggle('active',p===PAGE);
