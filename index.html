@@ -170,7 +170,7 @@ input[type=file]{display:none}
 var SB_URL='https://mepgeidrcrsaqvcihslm.supabase.co';
 var SB_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1lcGdlaWRyY3JzYXF2Y2loc2xtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg3MzI3OTcsImV4cCI6MjA5NDMwODc5N30.1dji3baHAGyfcNfqPz9Nxu_BChRQqmt57jFJplCM8K4';
 var SBH={'Content-Type':'application/json','apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY};
-var TABLES={pick:'picker_data',cam:'camara_data',hk:'hk_data'};
+var TABLES={pick:'picker_data',cam:'camara_data',hk:'hk_data',ctl:'control_data'};
 
 async function sbGet(mod,month){
   setSy(1);
@@ -1425,7 +1425,7 @@ function renderPickTendencias(){
 // ══ MESA CONTROL ═══════════════════════════════════════════════════════════
 var DB_CTL = {}; // {fecha: {TM:[],TT:[],TN:[]}}
 var CTL_CIA_FILTER = 'TODAS';
-var OBJ_CTL = 200;
+var OBJ_CTL = 300;
 var TOL_CTL = 20;
 
 function baseDateCTL(dt){
@@ -1555,8 +1555,23 @@ function processCtlRows(rows,fname){
     DB_CTL[dk]=dayData;
   });
 
-  toast('✓ '+fname+' cargado — '+Object.keys(grupos).length+' días','ok');
-  PAGE='ctl-resumen';updNav();renderCtlResumen();ldr(0);
+  // Guardar en Supabase por mes
+  var meses={};
+  Object.keys(DB_CTL).forEach(function(dk){
+    var nm=dk.slice(0,7);
+    if(!meses[nm])meses[nm]={};
+    meses[nm][dk]=DB_CTL[dk];
+  });
+  var saves=Object.keys(meses).map(function(nm){
+    return sbUpsertCtl(nm,meses[nm]);
+  });
+  Promise.all(saves).then(function(){
+    toast('✓ '+fname+' guardado — '+Object.keys(grupos).length+' días','ok');
+    PAGE='ctl-resumen';updNav();renderCtlResumen();ldr(0);
+  }).catch(function(){
+    toast('✓ Cargado (error al guardar en DB)','ok');
+    PAGE='ctl-resumen';updNav();renderCtlResumen();ldr(0);
+  });
 }
 
 function renderCtlResumen(){
@@ -1713,6 +1728,33 @@ function renderCtlTendencias(){
   });
 }
 
+// ── CTL Supabase ──
+async function sbUpsertCtl(nm, monthData){
+  setSy(1);
+  try{
+    var existing = await fetch(SB_URL+'/rest/v1/control_data?id=eq.'+nm+'&select=id',{headers:SBH});
+    var rows = await existing.json();
+    var method = rows.length ? 'PATCH' : 'POST';
+    var url = SB_URL+'/rest/v1/control_data'+(method==='PATCH'?'?id=eq.'+nm:'');
+    var body = method==='PATCH' ? {data:monthData} : {id:nm,data:monthData};
+    var r = await fetch(url,{method:method,headers:Object.assign({},SBH,{'Prefer':'return=minimal'}),body:JSON.stringify(body)});
+    setSy(0,'ok');return r.ok;
+  }catch(e){setSy(0,'er');return false;}
+}
+
+async function sbLoadCtl(){
+  setSy(1);
+  try{
+    var r=await fetch(SB_URL+'/rest/v1/control_data?select=id,data&order=id.asc',{headers:SBH});
+    if(!r.ok)throw 0;
+    var rows=await r.json();
+    rows.forEach(function(row){
+      Object.assign(DB_CTL, row.data);
+    });
+    setSy(0,'ok');
+  }catch(e){setSy(0,'er');}
+}
+
 function goPage(p){PAGE=p;SEL=null;updNav();render();}
 function updNav(){
   var pages={pick:['resumen','ranking','dias','tendencias','config'],cam:['resumen','dias','cal','calperf','config'],hk:['resumen','dias','config'],ing:['resumen','ing-dias'],ctl:['ctl-resumen','ctl-dias','ctl-tendencias','config']};
@@ -1765,6 +1807,7 @@ async function init(){
     DB.pick=await sbGet('pick',CUR);
     try{var lsOut=localStorage.getItem('cam_out_'+CUR);if(lsOut)window.CAM_OUT=+lsOut;}catch(e){}
     sbGetOut(CUR).then(function(o){if(o){window.CAM_OUT=o;try{localStorage.setItem('cam_out_'+CUR,o);}catch(e){};}});
+    await sbLoadCtl();
     updNav();render();
   }catch(e){
     document.getElementById('main').innerHTML='<div class="no-data">❌ Error conectando. Verificá tu conexión.</div>';
