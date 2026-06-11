@@ -447,14 +447,118 @@ function showPickUpload(){
     '</div></div>';
 }
 function onDrop(e){e.preventDefault();var db=document.getElementById('dropBox');if(db)db.classList.remove('drag');if(e.dataTransfer.files[0])readPickFile(e.dataTransfer.files[0]);}
+function parseExcelSerial(v){
+  if(!v&&v!==0)return null;
+  if(typeof v==='number'){
+    var ms=(v-25569)*86400000;
+    var d=new Date(ms);
+    return new Date(d.getUTCFullYear(),d.getUTCMonth(),d.getUTCDate(),d.getUTCHours(),d.getUTCMinutes(),d.getUTCSeconds());
+  }
+  var s=String(v).trim();
+  var m=s.match(/^(\d{4})-(\d{2})-(\d{2})[T\s](\d{2}):(\d{2}):?(\d{2})?/);
+  if(m)return new Date(+m[1],+m[2]-1,+m[3],+m[4],+m[5],+(m[6]||0));
+  return null;
+}
+
+async function processPickBI(rows,fname){
+  ldr(1,'Procesando BI...');
+  // Filtrar filas válidas (turno TM/TT/TN y colaborador no vacío)
+  var valid=rows.filter(function(r){
+    var t=String(r['Turno']||r['TURNO']||'').trim();
+    var c=String(r['Colaborador']||r['COLABORADOR']||'').trim();
+    return (t==='TM'||t==='TT'||t==='TN')&&c;
+  });
+  if(!valid.length){toast('Sin datos válidos en el BI','err');ldr(0);return;}
+
+  // Agrupar por fecha base + turno + colaborador
+  var grupos={};
+  valid.forEach(function(r){
+    var turno=String(r['Turno']||r['TURNO']||'').trim();
+    var colab=String(r['Colaborador']||r['COLABORADOR']||'').trim();
+    var cia=String(r['Cía']||r['CIA']||r['Cia']||'').trim();
+    var lineas=parseFloat(String(r['Líneas']||r['Lineas']||r['LINEAS']||'0'))||0;
+    var fMin=parseExcelSerial(r['Fecha Minima']||r['FECHA MINIMA']||r['fecha minima']);
+    var fMax=parseExcelSerial(r['Fecha Maxima']||r['FECHA MAXIMA']||r['fecha maxima']);
+    if(!fMin)return;
+    var dk=baseDate(fMin);
+    if(!grupos[dk])grupos[dk]={TM:{},TT:{},TN:{}};
+    if(!grupos[dk][turno][colab])grupos[dk][turno][colab]={items:0,first:fMin,last:fMax||fMin,cia:cia};
+    grupos[dk][turno][colab].items+=lineas;
+    if(fMin<grupos[dk][turno][colab].first)grupos[dk][turno][colab].first=fMin;
+    if(fMax&&fMax>grupos[dk][turno][colab].last)grupos[dk][turno][colab].last=fMax;
+  });
+
+  // Convertir a formato igual que analyzePickDay
+  var dates=Object.keys(grupos).sort();
+  if(!dates.length){toast('Sin fechas válidas','err');ldr(0);return;}
+
+  for(var i=0;i<dates.length;i++){
+    var dk=dates[i];
+    var dayResult={TM:[],TT:[],TN:[]};
+    ['TM','TT','TN'].forEach(function(sh){
+      Object.keys(grupos[dk][sh]).forEach(function(colab){
+        var u=grupos[dk][sh][colab];
+        var wS=new Date(dk+'T06:00:00');
+        var wE=new Date(wS.getTime()+86400000);
+        var elapsed=Math.round((u.last-u.first)/60000);
+        var gap=Math.max(0,Math.round((u.first-(sh==='TM'?wS:sh==='TT'?new Date(dk+'T14:00:00'):new Date(dk+'T22:00:00')))/60000));
+        var dead=Math.max(0,elapsed-u.items);
+        var exc=Math.max(0,dead-90);
+        var prod=Math.max(0,elapsed-dead);
+        var iph=prod>0?Math.round(u.items/(prod/60)*10)/10:u.items;
+        var fmtH=function(d){return('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2);};
+        dayResult[sh].push({
+          user:colab,
+          items:Math.round(u.items),
+          units:Math.round(u.items),
+          first:fmtH(u.first),
+          last:fmtH(u.last),
+          gap:gap,
+          dead:dead,
+          exc:exc,
+          prod:prod,
+          iph:iph,
+          cia:u.cia
+        });
+      });
+      dayResult[sh].sort(function(a,b){return b.exc-a.exc;});
+    });
+
+    // Merge con existente si hay
+    if(DB.pick[dk]){
+      ['TM','TT','TN'].forEach(function(sh){
+        var exU={};
+        (DB.pick[dk][sh]||[]).forEach(function(u){exU[u.user]=u;});
+        (dayResult[sh]||[]).forEach(function(u){exU[u.user]=u;});
+        dayResult[sh]=Object.values(exU).sort(function(a,b){return b.exc-a.exc;});
+      });
+    }
+
+    ldr(1,'Guardando...');
+    var ok=await sbUpsert('pick',dk,dayResult);
+    if(!ok){ldr(0);return;}
+    DB.pick[dk]=dayResult;
+  }
+
+  window._raw=null;
+  var nm=dates[0].slice(0,7);
+  if(nm!==CUR){CUR=nm;await updMS();}
+  toast('✓ BI cargado — '+dates.length+' días','ok');
+  PAGE='resumen';updNav();render();ldr(0);
+}
+
 function readPickFile(f){
   if(!f)return;ldr(1,'Leyendo...');
   var r=new FileReader();
   r.onload=function(e){
     try{
-      var wb=XLSX.read(e.target.result,{type:'array'});
+      var wb=XLSX.read(e.target.result,{type:'array',cellDates:false});
       var sn=wb.SheetNames.indexOf('Sheet1')>=0?'Sheet1':wb.SheetNames[0];
-      var raw=XLSX.utils.sheet_to_json(wb.Sheets[sn],{defval:''});
+      var raw=XLSX.utils.sheet_to_json(wb.Sheets[sn],{defval:'',raw:true});
+      // Detectar formato BI (tiene columna 'Colaborador')
+      if(raw.length&&(raw[0]['Colaborador']!==undefined||raw[0]['COLABORADOR']!==undefined)){
+        processPickBI(raw,f.name);return;
+      }
       var dMap={};
       raw.forEach(function(row){
         var ks=Object.keys(row);
