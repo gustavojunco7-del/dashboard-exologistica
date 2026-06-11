@@ -573,8 +573,22 @@ function readPickFile(f){
       // Detectar formato BI con Inicio (WMS detallado del BI)
       var hasInicio=raw.length&&raw[0]['Inicio']!==undefined;
       if(hasInicio){
-        var wbDates2=XLSX.read(e.target.result,{type:'array',cellDates:true});
-        raw=XLSX.utils.sheet_to_json(wbDates2.Sheets[sn],{defval:''});
+        // Convertir seriales numéricos a Date objects correctamente (sin timezone shift)
+        raw=raw.map(function(r){
+          var nr={};
+          Object.keys(r).forEach(function(k){
+            var v=r[k];
+            if(typeof v==='number'&&v>40000&&v<60000){
+              // Es un serial de fecha de Excel
+              var ms=(v-25569)*86400000;
+              var d=new Date(ms);
+              nr[k]=new Date(d.getUTCFullYear(),d.getUTCMonth(),d.getUTCDate(),d.getUTCHours(),d.getUTCMinutes(),d.getUTCSeconds());
+            } else {
+              nr[k]=v;
+            }
+          });
+          return nr;
+        });
       }
       var dMap={};
       raw.forEach(function(row){
@@ -1027,9 +1041,12 @@ function renderCamResumen(){
   var promDia=daysWithData>0?Math.round(filtU/daysWithData*10)/10:0;
   var out2=window.CAM_OUT||0;
   var target=Math.round(out2*0.01);
-  var pctTarget=target>0?Math.round(filtU/target*10000)/100:0;
-  var pctOut=out2>0?Math.round(filtU/out2*10000)/100:0;
-  var estado=filtU>=target?'✅ COMPLETADO':filtU>=target*0.75?'⚠️ EN PROCESO':'🔴 BAJO TARGET';
+  var calUdsKpi=0;if(DB.cal){Object.values(DB.cal).forEach(function(c){if(c.mes_key===CUR&&c.totales)calUdsKpi+=(c.totales.fisica||0);});}
+  var reproUdsKpi=0;if(DB.repro){DB.repro.forEach(function(l){(l.avance||[]).forEach(function(a){var am=a.fecha?a.fecha.slice(0,7):null;if(am===CUR)reproUdsKpi+=a.unidades||0;});});}
+  var totalCamaraKpi=filtU+(catFil==='TODAS'?calUdsKpi+reproUdsKpi:0);
+  var pctTarget=target>0?Math.round(totalCamaraKpi/target*10000)/100:0;
+  var pctOut=out2>0?Math.round(totalCamaraKpi/out2*10000)/100:0;
+  var estado=totalCamaraKpi>=target?'✅ COMPLETADO':totalCamaraKpi>=target*0.75?'⚠️ EN PROCESO':'🔴 BAJO TARGET';
   var filtCli=Object.entries(byCli).filter(function(e){
     return catFil==='TODAS'||(catFil==='CLIENTES'&&e[1].cat==='CLIENTES')||(catFil==='TIENDAS PROPIAS'&&e[1].cat==='TIENDAS PROPIAS');
   }).sort(function(a,b){return b[1].cant-a[1].cant;}).slice(0,10);
@@ -1053,7 +1070,6 @@ function renderCamResumen(){
   }
   var calUdsKpi=0;if(DB.cal){Object.values(DB.cal).forEach(function(c){if(c.mes_key===CUR&&c.totales)calUdsKpi+=(c.totales.fisica||0);});}
   var reproUdsKpi=0;if(DB.repro){DB.repro.forEach(function(l){(l.avance||[]).forEach(function(a){var am=a.fecha?a.fecha.slice(0,7):null;if(am===CUR)reproUdsKpi+=a.unidades||0;});});}
-  var totalCamaraKpi=filtU+(catFil==='TODAS'?calUdsKpi+reproUdsKpi:0);
   var kpiSub=catFil==='TODAS'&&calUdsKpi>0?'Prod. '+filtU.toLocaleString('es-AR')+' + Cal. '+calUdsKpi.toLocaleString('es-AR'):(catFil!=='TODAS'?'Filtrado: '+catFil:days.length+' días');
   html+=kpi('TOTAL UNIDADES MES',totalCamaraKpi.toLocaleString('es-AR'),kpiSub,'var(--cam)');
   html+=kpi('TOTAL TRÁMITES',filtT.toLocaleString('es-AR'),'');
@@ -1108,7 +1124,7 @@ function renderCamResumen(){
   if(out2>0)html+='<div style="font-size:10px;color:var(--muted);margin-top:2px">'+pctTarget+'% vs target</div>';
   html+='</div>';
   html+='<div style="text-align:center"><div style="font-size:9px;font-weight:700;color:var(--muted2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">PROCESADO EN CÁMARA</div>';
-  html+='<div style="font-size:22px;font-weight:800;color:var(--cam)">'+filtU.toLocaleString('es-AR')+'</div>';
+  html+='<div style="font-size:22px;font-weight:800;color:var(--cam)">'+totalCamaraKpi.toLocaleString('es-AR')+'</div>';
   html+='<div style="font-size:10px;color:var(--muted);margin-top:2px">'+filtT+' trámites</div></div>';
   html+='<div style="text-align:center"><div style="font-size:9px;font-weight:700;color:var(--muted2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">% AVANCE VS OUT</div>';
   html+='<div style="font-size:22px;font-weight:800;color:'+(pctOut>=1?'var(--green)':pctOut>=0.75?'var(--yellow)':'var(--red)')+'">'+pctOut+'%</div></div>';
