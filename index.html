@@ -1356,7 +1356,7 @@ function renderPickTendencias(){
         spanGaps:true
       };}).concat([{
         label:'Objetivo (300 b/op/turno)',
-        data:labels.map(function(){return OBJ_CTL;}),
+        data:labels.map(function(){return 200;}),
         borderColor:'rgba(34,197,94,0.6)',
         borderWidth:2,
         borderDash:[6,4],
@@ -1425,7 +1425,8 @@ function renderPickTendencias(){
 // ══ MESA CONTROL ═══════════════════════════════════════════════════════════
 var DB_CTL = {}; // {fecha: {TM:[],TT:[],TN:[]}}
 var CTL_CIA_FILTER = 'TODAS';
-var OBJ_CTL = 300;
+var CTL_DIVISOR = {FTW:6, EQP:12, APP:18};
+var CTL_TARGET  = {FTW:200, EQP:200, APP:40};
 var TOL_CTL = 20;
 
 function baseDateCTL(dt){
@@ -1517,7 +1518,8 @@ function processCtlRows(rows,fname){
 
     if(!grupos[dk])grupos[dk]={TM:{},TT:{},TN:{}};
     if(!grupos[dk][turno][ctrl])grupos[dk][turno][ctrl]={items:0,first:dt,last:dt,cia:cia};
-    grupos[dk][turno][ctrl].items+=cant;
+    var divisor=CTL_DIVISOR[cia]||6;
+    grupos[dk][turno][ctrl].items+=cant/divisor;
     if(turno==='TN'){
       var curFirst=grupos[dk][turno][ctrl].first;
       var curLast=grupos[dk][turno][ctrl].last;
@@ -1531,7 +1533,6 @@ function processCtlRows(rows,fname){
   });
 
   // Convertir a array y calcular métricas
-  var TARGET=OBJ_CTL;
   Object.keys(grupos).forEach(function(dk){
     var dayData={TM:[],TT:[],TN:[]};
     ['TM','TT','TN'].forEach(function(sh){
@@ -1539,30 +1540,26 @@ function processCtlRows(rows,fname){
       Object.keys(shData).forEach(function(ctrl){
         var u=shData[ctrl];
         if(!(u.first instanceof Date)||!(u.last instanceof Date))return;
+        var target=CTL_TARGET[u.cia]||200;
         var mins=(u.last-u.first)/60000;
         var hs=mins/60;
-        var iph=hs>0?Math.round(u.items/hs):u.items;
+        var iph=hs>0?Math.round(u.items/hs):Math.round(u.items);
         // Gap inicio: minutos desde inicio del turno hasta primer registro
         var turnoStart={TM:6,TT:14,TN:22}[sh];
         var startDt=new Date(u.first);
         startDt.setHours(turnoStart,0,0,0);
         var gap=Math.max(0,Math.round((u.first-startDt)/60000));
-        // Tiempo muerto aprox: duración total - items (cada item ~1 min)
-        var deadTotal=Math.max(0,Math.round(mins));
-        // Excedente: tiempo muerto sobre tolerancia (90+20=110 min)
-        var excTol=110;
-        var elapsedMin=Math.round(mins);
-        var exc=Math.max(0,elapsedMin+gap-TARGET); // simple: si no llega al target
         var fmtH=function(d){return('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2);};
         dayData[sh].push({
           user:ctrl,
           items:Math.round(u.items),
           cia:u.cia,
+          target:target,
           first:fmtH(u.first),
           last:fmtH(u.last),
           gap:gap,
           iph:iph,
-          pct:Math.min(100,Math.round(u.items/TARGET*100))
+          pct:Math.min(100,Math.round(u.items/target*100))
         });
       });
       // Ordenar por items desc
@@ -1592,7 +1589,7 @@ function processCtlRows(rows,fname){
               if(u.first<ex.first)newFirst=u.first;
               if(u.last>ex.last)newLast=u.last;
             }
-            map[u.user]=Object.assign({},ex,{items:newItems,first:newFirst,last:newLast,pct:Math.min(100,Math.round(newItems/OBJ_CTL*100))});
+            map[u.user]=Object.assign({},ex,{items:newItems,first:newFirst,last:newLast,pct:Math.min(100,Math.round(newItems/(CTL_TARGET[ex.cia]||200)*100))});
           } else {
             map[u.user]=u;
           }
@@ -1639,7 +1636,7 @@ function renderCtlResumen(){
     var day=DB_CTL[dk];
     var total=0,pickers=0;
     ['TM','TT','TN'].forEach(function(sh){(day[sh]||[]).forEach(function(u){total+=u.items;pickers++;});});
-    var pct=Math.min(100,Math.round(total/(pickers||1)/OBJ_CTL*100));
+    var pct=Math.min(100,Math.round(total/(pickers||1)/200*100));
     var fp=dk.split('-');
     var lbl=(+fp[2])+'/'+(+fp[1])+'/'+fp[0];
     var color=pct>=90?'var(--green)':pct>=70?'var(--yellow)':'var(--red)';
@@ -1682,7 +1679,7 @@ function renderCtlDayDetail(dk){
     html+='<div style="background:var(--panel);border:1px solid var(--border);border-radius:10px;margin-bottom:16px;overflow:hidden">'+
       '<div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">'+
         '<div style="font-size:13px;font-weight:700">'+TLABELS[sh]+' · '+users.length+' operarios</div>'+
-        '<div style="font-size:12px;color:var(--muted2)">Prom: <span style="color:var(--green);font-weight:700">'+avgItems+' bultos</span> · '+avgIph+' b/h · Target: <span style="color:var(--nike);font-weight:700">300 b/op/turno</span></div>'+
+        '<div style="font-size:12px;color:var(--muted2)">Prom: <span style="color:var(--green);font-weight:700">'+avgItems+' bultos</span> · '+avgIph+' b/h · Target: <span style="color:var(--nike);font-weight:700">FTW/EQP 200 · APP 40</span></div>'+
       '</div>'+
       '<table style="width:100%;border-collapse:collapse">'+
       '<thead><tr>'+
@@ -1692,7 +1689,7 @@ function renderCtlDayDetail(dk){
         '<th style="padding:8px 14px;text-align:left;font-size:10px;color:var(--muted2);text-transform:uppercase;border-bottom:1px solid var(--border)">1er reg.</th>'+
         '<th style="padding:8px 14px;text-align:left;font-size:10px;color:var(--muted2);text-transform:uppercase;border-bottom:1px solid var(--border)">Último</th>'+
         '<th style="padding:8px 14px;text-align:left;font-size:10px;color:var(--muted2);text-transform:uppercase;border-bottom:1px solid var(--border)">B/hora</th>'+
-        '<th style="padding:8px 14px;text-align:left;font-size:10px;color:var(--muted2);text-transform:uppercase;border-bottom:1px solid var(--border)">% Target</th>'+
+        '<th style="padding:8px 14px;text-align:left;font-size:10px;color:var(--muted2);text-transform:uppercase;border-bottom:1px solid var(--border)">% Target (FTW/EQP:200 · APP:40)</th>'+
       '</tr></thead><tbody>';
 
     users.forEach(function(u){
@@ -1709,7 +1706,8 @@ function renderCtlDayDetail(dk){
           '<div style="display:flex;align-items:center;gap:8px">'+
           '<div style="flex:1;height:6px;background:var(--border);border-radius:3px;overflow:hidden">'+
           '<div style="width:'+barW+'%;height:100%;background:'+pctColor+';border-radius:3px"></div></div>'+
-          '<span style="font-weight:700;color:'+pctColor+';min-width:36px">'+u.pct+'%</span></div></td>'+
+          '<span style="font-weight:700;color:'+pctColor+';min-width:36px">'+u.pct+'%</span>'+
+          '<span style="font-size:10px;color:var(--muted2)">/'+( u.target||200)+'</span></div></td>'+
       '</tr>';
     });
     html+='</tbody></table></div>';
@@ -1742,7 +1740,7 @@ function renderCtlTendencias(){
     '<div style="background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:20px">'+
     '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">'+
     '<div style="font-size:13px;font-weight:700">Productividad Mesa de Control por Turno</div>'+
-    '<div style="font-size:11px;color:var(--muted2)">Bultos promedio por operario · Objetivo: <span style="color:var(--green);font-weight:700">300 bultos / operario / turno</span></div>'+
+    '<div style="font-size:11px;color:var(--muted2)">Bultos promedio por operario · Objetivo: <span style="color:var(--green);font-weight:700">FTW/EQP: 200 · APP: 40 bultos/turno</span></div>'+
     '</div><canvas id="chartCtl" height="90"></canvas></div></div>';
 
   document.getElementById('main').innerHTML=html;
@@ -1759,7 +1757,7 @@ function renderCtlTendencias(){
         borderWidth:2,pointRadius:4,tension:0.3,spanGaps:true
       };}).concat([{
         label:'Objetivo (300 b/op/turno)',
-        data:labels.map(function(){return OBJ_CTL;}),
+        data:labels.map(function(){return 200;}),
         borderColor:'rgba(34,197,94,0.6)',borderWidth:2,borderDash:[6,4],pointRadius:0,fill:false
       }])
     },
