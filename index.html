@@ -1493,6 +1493,7 @@ function parseCtlFecha(v){
 }
 
 function processCtlRows(rows,fname){
+  function tnMs(d){var h=d.getHours();return h>=22?(h-22)*3600000+d.getMinutes()*60000:(h+2)*3600000+d.getMinutes()*60000+7200000;}
   // Parsear y agrupar por fecha base + turno + controlador
   var grupos={}; // {dk: {TM:{user:{items,first,last}}, TT:{}, TN:{}}}
   rows.forEach(function(r){
@@ -1510,8 +1511,15 @@ function processCtlRows(rows,fname){
     if(!grupos[dk])grupos[dk]={TM:{},TT:{},TN:{}};
     if(!grupos[dk][turno][ctrl])grupos[dk][turno][ctrl]={items:0,first:dt,last:dt,cia:cia};
     grupos[dk][turno][ctrl].items+=cant;
-    if(dt<grupos[dk][turno][ctrl].first)grupos[dk][turno][ctrl].first=dt;
-    if(dt>grupos[dk][turno][ctrl].last)grupos[dk][turno][ctrl].last=dt;
+    if(turno==='TN'){
+      var curFirst=grupos[dk][turno][ctrl].first;
+      var curLast=grupos[dk][turno][ctrl].last;
+      if(tnMs(dt)<tnMs(curFirst))grupos[dk][turno][ctrl].first=dt;
+      if(tnMs(dt)>tnMs(curLast))grupos[dk][turno][ctrl].last=dt;
+    } else {
+      if(dt<grupos[dk][turno][ctrl].first)grupos[dk][turno][ctrl].first=dt;
+      if(dt>grupos[dk][turno][ctrl].last)grupos[dk][turno][ctrl].last=dt;
+    }
     grupos[dk][turno][ctrl].cia=cia; // última CIA del usuario
   });
 
