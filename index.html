@@ -1530,59 +1530,6 @@ function processCtlRows(rows,fname){
     grupos[dk][turno][ctrl].cia=cia; // última CIA del usuario
   });
 
-  // Fusionar con datos existentes en DB_CTL
-  Object.keys(grupos).forEach(function(dk){
-    if(DB_CTL[dk]){
-      ['TM','TT','TN'].forEach(function(sh){
-        var existing=DB_CTL[dk][sh]||[];
-        var incoming=grupos[dk][sh]||{};
-        if(sh==='TN'){
-          // Para TN: fusionar sumando bultos y extendiendo rango horario
-          var exMap={};
-          existing.forEach(function(u){exMap[u.user]=u;});
-          Object.keys(incoming).forEach(function(ctrl){
-            var u=incoming[ctrl];
-            if(exMap[ctrl]){
-              var ex=exMap[ctrl];
-              // Comparar tiempos nocturnos correctamente
-              function tnMin(d){var h=d.getHours();return h>=22?(h-22)*60+d.getMinutes():(h+2)*60+d.getMinutes()+120;}
-              var newFirst=tnMin(u.first)<tnMin(ex._first||u.first)?u.first:ex._first||ex.first;
-              var newLast=tnMin(u.last)>tnMin(ex._last||u.last)?u.last:ex._last||ex.last;
-              exMap[ctrl]={
-                user:ctrl,
-                items:ex.items+Math.round(u.items),
-                cia:u.cia,
-                _first:newFirst,_last:newLast,
-                first:typeof newFirst==='object'?('0'+newFirst.getHours()).slice(-2)+':'+('0'+newFirst.getMinutes()).slice(-2):ex.first,
-                last:typeof newLast==='object'?('0'+newLast.getHours()).slice(-2)+':'+('0'+newLast.getMinutes()).slice(-2):ex.last,
-                iph:0,pct:0
-              };
-            } else {
-              // Usuario nuevo en TN
-              var fmtH=function(d){return('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2);};
-              exMap[ctrl]={user:ctrl,items:Math.round(u.items),cia:u.cia,first:fmtH(u.first),last:fmtH(u.last),iph:0,pct:0};
-            }
-          });
-          // Recalcular iph y pct
-          Object.values(exMap).forEach(function(u){
-            u.iph=u.items>0?Math.round(u.items):0;
-            u.pct=Math.min(100,Math.round(u.items/OBJ_CTL*100));
-          });
-          grupos[dk][sh]=exMap; // sobreescribir con fusionado
-        } else {
-          // TM y TT: mantener el que tenga más registros
-          var incomingArr=Object.keys(incoming);
-          if(existing.length>incomingArr.length){
-            // Convertir existing de vuelta a map para que el proceso normal lo use
-            var exMap2={};
-            existing.forEach(function(u){exMap2[u.user]={items:u.items,first:new Date(),last:new Date(),cia:u.cia};exMap2[u.user].items=u.items;});
-            grupos[dk][sh]=exMap2;
-          }
-        }
-      });
-    }
-  });
-
   // Convertir a array y calcular métricas
   var TARGET=OBJ_CTL;
   Object.keys(grupos).forEach(function(dk){
@@ -1591,6 +1538,7 @@ function processCtlRows(rows,fname){
       var shData=grupos[dk][sh];
       Object.keys(shData).forEach(function(ctrl){
         var u=shData[ctrl];
+        if(!(u.first instanceof Date)||!(u.last instanceof Date))return;
         var mins=(u.last-u.first)/60000;
         var hs=mins/60;
         var iph=hs>0?Math.round(u.items/hs):u.items;
@@ -1620,6 +1568,38 @@ function processCtlRows(rows,fname){
       // Ordenar por items desc
       dayData[sh].sort(function(a,b){return b.items-a.items;});
     });
+    // Fusionar con datos existentes si los hay
+    if(DB_CTL[dk]){
+      ['TM','TT','TN'].forEach(function(sh){
+        var existing=DB_CTL[dk][sh]||[];
+        var incoming=dayData[sh];
+        if(!incoming.length){dayData[sh]=existing;return;}
+        if(!existing.length)return;
+        // Para todos los turnos: usar el que tenga más usuarios, completando con el otro
+        var map={};
+        existing.forEach(function(u){map[u.user]=Object.assign({},u);});
+        incoming.forEach(function(u){
+          if(map[u.user]){
+            // Sumar items, tomar primer/último según turno
+            var ex=map[u.user];
+            var newItems=ex.items+u.items;
+            var newFirst=ex.first, newLast=ex.last;
+            if(sh==='TN'){
+              function tnMinStr(s){if(!s)return 0;var p=s.split(':');var h=+p[0],m=+p[1];return h>=22?(h-22)*60+m:(h+2)*60+m+120;}
+              if(tnMinStr(u.first)<tnMinStr(ex.first))newFirst=u.first;
+              if(tnMinStr(u.last)>tnMinStr(ex.last))newLast=u.last;
+            } else {
+              if(u.first<ex.first)newFirst=u.first;
+              if(u.last>ex.last)newLast=u.last;
+            }
+            map[u.user]=Object.assign({},ex,{items:newItems,first:newFirst,last:newLast,pct:Math.min(100,Math.round(newItems/OBJ_CTL*100))});
+          } else {
+            map[u.user]=u;
+          }
+        });
+        dayData[sh]=Object.values(map).sort(function(a,b){return b.items-a.items;});
+      });
+    }
     DB_CTL[dk]=dayData;
   });
 
