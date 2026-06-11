@@ -1475,17 +1475,24 @@ function readCtlFile(f){
 
 function parseCtlFecha(v){
   if(!v&&v!==0)return null;
-  // Número serial de Excel (días desde 1900-01-01)
   if(typeof v==='number'){
-    // Excel serial date a JS Date
-    var d=new Date(Math.round((v-25569)*86400*1000));
-    // Ajustar zona horaria
-    d=new Date(d.getTime()+d.getTimezoneOffset()*60000);
-    return isNaN(d.getTime())?null:d;
+    // Serial de Excel: convertir a fecha local sin problema de timezone
+    // Extraer fecha y hora directamente del serial
+    var serial = v;
+    var days = Math.floor(serial);
+    var frac = serial - days;
+    // Fecha base Excel: 1900-01-01 = serial 1 (con bug bisiesto: 25569 = 1970-01-01)
+    var ms = (days - 25569) * 86400000;
+    var d = new Date(ms);
+    // La hora viene de la fracción del día, en UTC — usarla directamente
+    var totalSecs = Math.round(frac * 86400);
+    var hh = Math.floor(totalSecs / 3600);
+    var mm = Math.floor((totalSecs % 3600) / 60);
+    var ss = totalSecs % 60;
+    // Construir fecha local con los valores UTC del serial
+    return new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), hh, mm, ss);
   }
-  // String
   var s=String(v).trim();
-  // dd/mm/yyyy hh:mm:ss
   var m=s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2}):?(\d{2})?/);
   if(m)return new Date(+m[3],+m[2]-1,+m[1],+m[4],+m[5],+(m[6]||0));
   var d2=new Date(s);
