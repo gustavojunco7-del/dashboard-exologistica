@@ -1355,8 +1355,8 @@ function renderPickTendencias(){
         tension:0.3,
         spanGaps:true
       };}).concat([{
-        label:'Objetivo (200)',
-        data:labels.map(function(){return 200;}),
+        label:'Objetivo (300 b/op/turno)',
+        data:labels.map(function(){return OBJ_CTL;}),
         borderColor:'rgba(34,197,94,0.6)',
         borderWidth:2,
         borderDash:[6,4],
@@ -1634,7 +1634,7 @@ function renderCtlDayDetail(dk){
     html+='<div style="background:var(--panel);border:1px solid var(--border);border-radius:10px;margin-bottom:16px;overflow:hidden">'+
       '<div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">'+
         '<div style="font-size:13px;font-weight:700">'+TLABELS[sh]+' · '+users.length+' operarios</div>'+
-        '<div style="font-size:12px;color:var(--muted2)">Prom: <span style="color:var(--green);font-weight:700">'+avgItems+' bultos</span> · '+avgIph+' b/h</div>'+
+        '<div style="font-size:12px;color:var(--muted2)">Prom: <span style="color:var(--green);font-weight:700">'+avgItems+' bultos</span> · '+avgIph+' b/h · Target: <span style="color:var(--nike);font-weight:700">300 b/op/turno</span></div>'+
       '</div>'+
       '<table style="width:100%;border-collapse:collapse">'+
       '<thead><tr>'+
@@ -1694,7 +1694,7 @@ function renderCtlTendencias(){
     '<div style="background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:20px">'+
     '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">'+
     '<div style="font-size:13px;font-weight:700">Productividad Mesa de Control por Turno</div>'+
-    '<div style="font-size:11px;color:var(--muted2)">Bultos promedio por operario · Objetivo: <span style="color:var(--green);font-weight:700">200 bultos</span></div>'+
+    '<div style="font-size:11px;color:var(--muted2)">Bultos promedio por operario · Objetivo: <span style="color:var(--green);font-weight:700">300 bultos / operario / turno</span></div>'+
     '</div><canvas id="chartCtl" height="90"></canvas></div></div>';
 
   document.getElementById('main').innerHTML=html;
