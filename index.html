@@ -449,14 +449,21 @@ function showPickUpload(){
 function onDrop(e){e.preventDefault();var db=document.getElementById('dropBox');if(db)db.classList.remove('drag');if(e.dataTransfer.files[0])readPickFile(e.dataTransfer.files[0]);}
 function parseExcelSerial(v){
   if(!v&&v!==0)return null;
+  // JS Date object (from cellDates:true)
+  if(v instanceof Date){return isNaN(v.getTime())?null:v;}
   if(typeof v==='number'){
     var ms=(v-25569)*86400000;
     var d=new Date(ms);
     return new Date(d.getUTCFullYear(),d.getUTCMonth(),d.getUTCDate(),d.getUTCHours(),d.getUTCMinutes(),d.getUTCSeconds());
   }
   var s=String(v).trim();
+  if(!s)return null;
+  // Formato ISO "2026-06-10 10:44:24"
   var m=s.match(/^(\d{4})-(\d{2})-(\d{2})[T\s](\d{2}):(\d{2}):?(\d{2})?/);
   if(m)return new Date(+m[1],+m[2]-1,+m[3],+m[4],+m[5],+(m[6]||0));
+  // Formato XLSX americano "6/10/2026 10:44 AM"
+  var m2=s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM)?/i);
+  if(m2){var hh=+m2[4];if(m2[7]&&m2[7].toUpperCase()==='PM'&&hh<12)hh+=12;if(m2[7]&&m2[7].toUpperCase()==='AM'&&hh===12)hh=0;return new Date(+m2[3],+m2[2]-1,+m2[1],hh,+m2[5],+(m2[6]||0));}
   return null;
 }
 
@@ -556,8 +563,12 @@ function readPickFile(f){
       var sn=wb.SheetNames.indexOf('Sheet1')>=0?'Sheet1':wb.SheetNames[0];
       var raw=XLSX.utils.sheet_to_json(wb.Sheets[sn],{defval:'',raw:true});
       // Detectar formato BI (tiene columna 'Colaborador')
-      if(raw.length&&(raw[0]['Colaborador']!==undefined||raw[0]['COLABORADOR']!==undefined)){
-        processPickBI(raw,f.name);return;
+      var isBi=raw.length&&(raw[0]['Colaborador']!==undefined||raw[0]['COLABORADOR']!==undefined);
+      if(isBi){
+        // Para BI usar cellDates:true para obtener Date objects directamente
+        var wbDates=XLSX.read(e.target.result,{type:'array',cellDates:true});
+        var rawBi=XLSX.utils.sheet_to_json(wbDates.Sheets[sn],{defval:''});
+        processPickBI(rawBi,f.name);return;
       }
       var dMap={};
       raw.forEach(function(row){
