@@ -1075,8 +1075,9 @@ function renderCamResumen(){
     html+='<tr><td class="tl" style="font-size:10px">'+cat+'</td><td>'+r.cant.toLocaleString('es-AR')+'</td><td>'+r.n+'</td></tr>';
   });
   html+='<tr style="background:var(--panel2)"><td class="tl" style="font-weight:700;font-size:10px">PRODUCCIÓN</td><td><strong>'+totU.toLocaleString('es-AR')+'</strong></td><td><strong>'+totT+'</strong></td></tr>';
-  if(calUdsMes>0){
-    html+='<tr><td class="tl" style="font-size:10px;color:var(--cal)">CALIDAD</td><td style="color:var(--cal)">'+calUdsMes.toLocaleString('es-AR')+'</td><td style="color:var(--muted)">—</td></tr>';
+  if(calUdsMes>0||reproUdsMes>0){
+    var totalCal=calUdsMes+reproUdsMes;
+    html+='<tr><td class="tl" style="font-size:10px;color:var(--cal)">CALIDAD</td><td style="color:var(--cal)">'+totalCal.toLocaleString('es-AR')+'</td><td style="color:var(--muted)">—</td></tr>';
     html+='<tr style="background:var(--panel2);border-top:2px solid var(--cam)"><td class="tl" style="font-weight:800;font-size:10px">TOTAL CÁMARA</td><td><strong style="color:var(--cam)">'+totalCamara.toLocaleString('es-AR')+'</strong></td><td><strong>'+totT+'</strong></td></tr>';
   }
   html+='</tbody></table></div></div>';
