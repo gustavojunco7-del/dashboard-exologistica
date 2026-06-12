@@ -1658,9 +1658,10 @@ function processCtlRows(rows,fname){
     var cia=(r['CIA']||r['Cia']||'').trim();
 
     if(!grupos[dk])grupos[dk]={TM:{},TT:{},TN:{}};
-    if(!grupos[dk][turno][ctrl])grupos[dk][turno][ctrl]={items:0,first:dt,last:dt,cia:cia};
+    if(!grupos[dk][turno][ctrl])grupos[dk][turno][ctrl]={items:0,unidadesRaw:0,first:dt,last:dt,cia:cia};
     var divisor=CTL_DIVISOR[cia]||6;
     grupos[dk][turno][ctrl].items+=cant/divisor;
+    grupos[dk][turno][ctrl].unidadesRaw+=cant;
     if(turno==='TN'){
       var curFirst=grupos[dk][turno][ctrl].first;
       var curLast=grupos[dk][turno][ctrl].last;
@@ -1694,6 +1695,7 @@ function processCtlRows(rows,fname){
         dayData[sh].push({
           user:ctrl,
           items:Math.round(u.items),
+          unidades:Math.round(u.unidadesRaw||0),
           cia:u.cia,
           target:target,
           first:fmtH(u.first),
@@ -1826,6 +1828,7 @@ function renderCtlDayDetail(dk){
       '<thead><tr>'+
         '<th style="padding:8px 14px;text-align:left;font-size:10px;color:var(--muted2);text-transform:uppercase;border-bottom:1px solid var(--border)">Operario</th>'+
         '<th style="padding:8px 14px;text-align:left;font-size:10px;color:var(--muted2);text-transform:uppercase;border-bottom:1px solid var(--border)">CIA</th>'+
+        '<th style="padding:8px 14px;text-align:left;font-size:10px;color:var(--muted2);text-transform:uppercase;border-bottom:1px solid var(--border)">Unidades</th>'+
         '<th style="padding:8px 14px;text-align:left;font-size:10px;color:var(--muted2);text-transform:uppercase;border-bottom:1px solid var(--border)">Bultos</th>'+
         '<th style="padding:8px 14px;text-align:left;font-size:10px;color:var(--muted2);text-transform:uppercase;border-bottom:1px solid var(--border)">1er reg.</th>'+
         '<th style="padding:8px 14px;text-align:left;font-size:10px;color:var(--muted2);text-transform:uppercase;border-bottom:1px solid var(--border)">Último</th>'+
@@ -1839,6 +1842,7 @@ function renderCtlDayDetail(dk){
       html+='<tr style="border-bottom:1px solid #0d1a2a">'+
         '<td style="padding:10px 14px;font-weight:600">'+u.user+'</td>'+
         '<td style="padding:10px 14px;color:var(--muted2);font-size:12px">'+u.cia+'</td>'+
+        '<td style="padding:10px 14px;color:var(--muted2);font-size:13px">'+(u.unidades||0).toLocaleString('es-AR')+'</td>'+
         '<td style="padding:10px 14px;font-weight:700;font-size:14px">'+u.items.toLocaleString('es-AR')+'</td>'+
         '<td style="padding:10px 14px;color:var(--muted2);font-size:12px">'+u.first+'</td>'+
         '<td style="padding:10px 14px;color:var(--muted2);font-size:12px">'+u.last+'</td>'+
