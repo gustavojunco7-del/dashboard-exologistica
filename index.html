@@ -1658,18 +1658,19 @@ function processCtlRows(rows,fname){
     var cia=(r['CIA']||r['Cia']||'').trim();
 
     if(!grupos[dk])grupos[dk]={TM:{},TT:{},TN:{}};
-    if(!grupos[dk][turno][ctrl])grupos[dk][turno][ctrl]={items:0,unidadesRaw:0,first:dt,last:dt,cia:cia};
+    var ctlKey=ctrl+'|'+cia;
+    if(!grupos[dk][turno][ctlKey])grupos[dk][turno][ctlKey]={items:0,unidadesRaw:0,first:dt,last:dt,cia:cia,user:ctrl};
     var divisor=CTL_DIVISOR[cia]||6;
-    grupos[dk][turno][ctrl].items+=cant/divisor;
-    grupos[dk][turno][ctrl].unidadesRaw+=cant;
+    grupos[dk][turno][ctlKey].items+=cant/divisor;
+    grupos[dk][turno][ctlKey].unidadesRaw+=cant;
     if(turno==='TN'){
-      var curFirst=grupos[dk][turno][ctrl].first;
-      var curLast=grupos[dk][turno][ctrl].last;
-      if(tnMs(dt)<tnMs(curFirst))grupos[dk][turno][ctrl].first=dt;
-      if(tnMs(dt)>tnMs(curLast))grupos[dk][turno][ctrl].last=dt;
+      var curFirst=grupos[dk][turno][ctlKey].first;
+      var curLast=grupos[dk][turno][ctlKey].last;
+      if(tnMs(dt)<tnMs(curFirst))grupos[dk][turno][ctlKey].first=dt;
+      if(tnMs(dt)>tnMs(curLast))grupos[dk][turno][ctlKey].last=dt;
     } else {
-      if(dt<grupos[dk][turno][ctrl].first)grupos[dk][turno][ctrl].first=dt;
-      if(dt>grupos[dk][turno][ctrl].last)grupos[dk][turno][ctrl].last=dt;
+      if(dt<grupos[dk][turno][ctlKey].first)grupos[dk][turno][ctlKey].first=dt;
+      if(dt>grupos[dk][turno][ctlKey].last)grupos[dk][turno][ctlKey].last=dt;
     }
     grupos[dk][turno][ctrl].cia=cia; // última CIA del usuario
   });
@@ -1717,9 +1718,10 @@ function processCtlRows(rows,fname){
         if(!existing.length)return;
         // Para todos los turnos: usar el que tenga más usuarios, completando con el otro
         var map={};
-        existing.forEach(function(u){map[u.user]=Object.assign({},u);});
+        existing.forEach(function(u){map[u.user+'|'+u.cia]=Object.assign({},u);});
         incoming.forEach(function(u){
-          if(map[u.user]){
+          var mk=u.user+'|'+u.cia;
+          if(map[mk]){
             // Sumar items, tomar primer/último según turno
             var ex=map[u.user];
             var newItems=ex.items+u.items;
@@ -1732,9 +1734,9 @@ function processCtlRows(rows,fname){
               if(u.first<ex.first)newFirst=u.first;
               if(u.last>ex.last)newLast=u.last;
             }
-            map[u.user]=Object.assign({},ex,{items:newItems,unidades:(ex.unidades||0)+(u.unidades||0),first:newFirst,last:newLast,pct:Math.min(100,Math.round(newItems/(CTL_TARGET[ex.cia]||200)*100))});
+            map[mk]=Object.assign({},ex,{items:newItems,unidades:(ex.unidades||0)+(u.unidades||0),first:newFirst,last:newLast,pct:Math.min(100,Math.round(newItems/(CTL_TARGET[ex.cia]||200)*100))});
           } else {
-            map[u.user]=u;
+            map[mk]=u;
           }
         });
         dayData[sh]=Object.values(map).sort(function(a,b){return b.items-a.items;});
@@ -1868,133 +1870,63 @@ function renderCtlTendencias(){
     return;
   }
   var labels=[];
-  var dataBultos={TM:[],TT:[],TN:[]};
+  var dataTurnos={TM:{FTW:[],EQP:[],APP:[]},TT:{FTW:[],EQP:[],APP:[]},TN:{FTW:[],EQP:[],APP:[]}};
+
   days.forEach(function(dk){
     var day=DB_CTL[dk];
     var fp=dk.split('-');
     labels.push((+fp[2])+'/'+fp[1]);
     ['TM','TT','TN'].forEach(function(sh){
-      var users=day[sh]||[];
-      if(!users.length){dataBultos[sh].push(null);return;}
-      var avg=Math.round(users.reduce(function(s,u){return s+u.items;},0)/users.length);
-      dataBultos[sh].push(avg);
+      var byCIA={FTW:{sum:0,n:0},EQP:{sum:0,n:0},APP:{sum:0,n:0}};
+      (day[sh]||[]).forEach(function(u){
+        var c=u.cia||'FTW';
+        if(byCIA[c]){byCIA[c].sum+=(u.items||0);byCIA[c].n++;}
+      });
+      ['FTW','EQP','APP'].forEach(function(c){
+        dataTurnos[sh][c].push(byCIA[c].n>0?Math.round(byCIA[c].sum/byCIA[c].n):null);
+      });
     });
   });
 
-  var html='<div style="padding:20px 0">'+
+  var html='<div style="padding:20px 0;display:flex;flex-direction:column;gap:16px">'+
     '<div style="background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:20px">'+
     '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">'+
-    '<div style="font-size:13px;font-weight:700">Productividad Mesa de Control por Turno</div>'+
-    '<div style="font-size:11px;color:var(--muted2)">Bultos promedio por operario · Objetivo: <span style="color:var(--green);font-weight:700">FTW/EQP: 200 · APP: 40 bultos/turno</span></div>'+
-    '</div><canvas id="chartCtl" height="90"></canvas></div></div>';
+    '<div style="font-size:13px;font-weight:700">FTW · EQP — Bultos promedio por operario por turno</div>'+
+    '<div style="font-size:11px;color:var(--muted2)">Objetivo: <span style="color:var(--green);font-weight:700">200 bultos/turno</span></div>'+
+    '</div><canvas id="chartCtlFTWEQP" height="90"></canvas></div>'+
+    '<div style="background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:20px">'+
+    '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">'+
+    '<div style="font-size:13px;font-weight:700">APP — Bultos promedio por operario por turno</div>'+
+    '<div style="font-size:11px;color:var(--muted2)">Objetivo: <span style="color:var(--yellow);font-weight:700">40 bultos/turno</span></div>'+
+    '</div><canvas id="chartCtlAPP" height="90"></canvas></div>'+
+    '</div>';
 
   document.getElementById('main').innerHTML=html;
 
-  var colors={TM:{border:'#FF6B00',bg:'rgba(255,107,0,0.15)'},TT:{border:'#3b82f6',bg:'rgba(59,130,246,0.15)'},TN:{border:'#a78bfa',bg:'rgba(167,139,250,0.15)'}};
-  var tlabels={TM:'Mañana 06-14',TT:'Tarde 14-22',TN:'Noche 22-06'};
-  new Chart(document.getElementById('chartCtl'),{
-    type:'line',
-    data:{
-      labels:labels,
-      datasets:['TM','TT','TN'].map(function(sh){return{
-        label:tlabels[sh],data:dataBultos[sh],
-        borderColor:colors[sh].border,backgroundColor:colors[sh].bg,
-        borderWidth:2,pointRadius:4,tension:0.3,spanGaps:true
-      };}).concat([{
-        label:'Objetivo (300 b/op/turno)',
-        data:labels.map(function(){return 200;}),
-        borderColor:'rgba(34,197,94,0.6)',borderWidth:2,borderDash:[6,4],pointRadius:0,fill:false
-      }])
-    },
-    options:{
-      responsive:true,
-      interaction:{mode:'index',intersect:false},
-      plugins:{legend:{labels:{color:'#94a3b8',font:{size:11}}},tooltip:{backgroundColor:'#1a2235',titleColor:'#e2e8f0',bodyColor:'#94a3b8',borderColor:'#1e2d45',borderWidth:1}},
-      scales:{
-        x:{ticks:{color:'#64748b',font:{size:11}},grid:{color:'#1e2d45'}},
-        y:{ticks:{color:'#64748b',font:{size:11}},grid:{color:'#1e2d45'},beginAtZero:true,
-          title:{display:true,text:'Bultos / operario',color:'#64748b',font:{size:11}}}
-      }
-    }
-  });
-}
+  var colors={TM:{border:'#FF6B00',bg:'rgba(255,107,0,0.12)'},TT:{border:'#3b82f6',bg:'rgba(59,130,246,0.12)'},TN:{border:'#a78bfa',bg:'rgba(167,139,250,0.12)'}};
+  var tlabels={TM:'Mañana',TT:'Tarde',TN:'Noche'};
+  var baseOpts={responsive:true,interaction:{mode:'index',intersect:false},plugins:{legend:{labels:{color:'#94a3b8',font:{size:11}}},tooltip:{backgroundColor:'#1a2235',titleColor:'#e2e8f0',bodyColor:'#94a3b8',borderColor:'#1e2d45',borderWidth:1}},scales:{x:{ticks:{color:'#64748b',font:{size:11}},grid:{color:'#1e2d45'}},y:{ticks:{color:'#64748b',font:{size:11}},grid:{color:'#1e2d45'},beginAtZero:true}}};
 
-// ── CTL Supabase ──
-async function sbUpsertCtl(nm, monthData){
-  setSy(1);
-  try{
-    var existing = await fetch(SB_URL+'/rest/v1/control_data?id=eq.'+nm+'&select=id',{headers:SBH});
-    var rows = await existing.json();
-    var method = rows.length ? 'PATCH' : 'POST';
-    var url = SB_URL+'/rest/v1/control_data'+(method==='PATCH'?'?id=eq.'+nm:'');
-    var body = method==='PATCH' ? {data:monthData} : {id:nm,data:monthData};
-    var r = await fetch(url,{method:method,headers:Object.assign({},SBH,{'Prefer':'return=minimal'}),body:JSON.stringify(body)});
-    setSy(0,'ok');return r.ok;
-  }catch(e){setSy(0,'er');return false;}
-}
-
-async function sbLoadCtl(){
-  setSy(1);
-  try{
-    var r=await fetch(SB_URL+'/rest/v1/control_data?select=id,data&order=id.asc',{headers:SBH});
-    if(!r.ok)throw 0;
-    var rows=await r.json();
-    rows.forEach(function(row){
-      Object.assign(DB_CTL, row.data);
+  var dsFTWEQP=[];
+  ['TM','TT','TN'].forEach(function(sh){
+    ['FTW','EQP'].forEach(function(cia){
+      var hasData=dataTurnos[sh][cia].some(function(v){return v!==null;});
+      if(!hasData)return;
+      dsFTWEQP.push({label:tlabels[sh]+' '+cia,data:dataTurnos[sh][cia],borderColor:colors[sh].border,backgroundColor:colors[sh].bg,borderWidth:2,borderDash:cia==='EQP'?[4,2]:[],pointRadius:3,tension:0.3,spanGaps:true});
     });
-    setSy(0,'ok');
-  }catch(e){setSy(0,'er');}
+  });
+  dsFTWEQP.push({label:'Objetivo (200)',data:labels.map(function(){return 200;}),borderColor:'rgba(34,197,94,0.6)',borderWidth:2,borderDash:[6,4],pointRadius:0,fill:false,tension:0});
+  new Chart(document.getElementById('chartCtlFTWEQP'),{type:'line',data:{labels:labels,datasets:dsFTWEQP},options:JSON.parse(JSON.stringify(baseOpts))});
+
+  var dsAPP=[];
+  ['TM','TT','TN'].forEach(function(sh){
+    var hasData=dataTurnos[sh]['APP'].some(function(v){return v!==null;});
+    if(!hasData)return;
+    dsAPP.push({label:tlabels[sh]+' APP',data:dataTurnos[sh]['APP'],borderColor:colors[sh].border,backgroundColor:colors[sh].bg,borderWidth:2,pointRadius:3,tension:0.3,spanGaps:true});
+  });
+  dsAPP.push({label:'Objetivo (40)',data:labels.map(function(){return 40;}),borderColor:'rgba(245,158,11,0.7)',borderWidth:2,borderDash:[6,4],pointRadius:0,fill:false,tension:0});
+  new Chart(document.getElementById('chartCtlAPP'),{type:'line',data:{labels:labels,datasets:dsAPP},options:JSON.parse(JSON.stringify(baseOpts))});
 }
-
-// ══ REPROCESOS ═══════════════════════════════════════════════════════════════
-DB.repro = [];
-
-async function reproLoad(){
-  try{
-    var r=await fetch(SB_URL+'/rest/v1/reprocesos_data?select=*,reprocesos_avance(*)&order=id.asc',{headers:SBH});
-    if(!r.ok)return;
-    var data=await r.json();
-    DB.repro=data.map(function(l){return{id:l.id,lote:l.lote,descripcion:l.descripcion,total:l.total_unidades,avance:(l.reprocesos_avance||[]).sort(function(a,b){return a.fecha>b.fecha?1:-1;})};});
-  }catch(e){}
-}
-
-async function reproAddLote(lote,desc,total){
-  var r=await fetch(SB_URL+'/rest/v1/reprocesos_data',{method:'POST',headers:Object.assign({},SBH,{'Prefer':'return=representation'}),body:JSON.stringify({lote:lote,descripcion:desc,total_unidades:total})});
-  if(!r.ok){toast('Error creando lote','err');return;}
-  await reproLoad();
-  renderReprocesos();
-  toast('✓ Lote creado','ok');
-}
-
-async function reproAddAvance(loteId,fecha,unidades){
-  // Check si ya existe ese día
-  var r=await fetch(SB_URL+'/rest/v1/reprocesos_avance?lote_id=eq.'+loteId+'&fecha=eq.'+fecha+'&select=id',{headers:SBH});
-  var ex=await r.json();
-  var method=ex.length?'PATCH':'POST';
-  var url=SB_URL+'/rest/v1/reprocesos_avance'+(ex.length?'?lote_id=eq.'+loteId+'&fecha=eq.'+fecha:'');
-  var body=ex.length?{unidades:unidades}:{lote_id:loteId,fecha:fecha,unidades:unidades};
-  var r2=await fetch(url,{method:method,headers:Object.assign({},SBH,{'Prefer':'return=minimal'}),body:JSON.stringify(body)});
-  if(!r2.ok){toast('Error guardando avance','err');return;}
-  await reproLoad();
-  renderReprocesos();
-  toast('✓ Avance guardado','ok');
-}
-
-async function reproDelAvance(loteId,fecha){
-  await fetch(SB_URL+'/rest/v1/reprocesos_avance?lote_id=eq.'+loteId+'&fecha=eq.'+fecha,{method:'DELETE',headers:SBH});
-  await reproLoad();
-  renderReprocesos();
-  toast('✓ Eliminado','ok');
-}
-
-async function reproDelLote(id){
-  await fetch(SB_URL+'/rest/v1/reprocesos_avance?lote_id=eq.'+id,{method:'DELETE',headers:SBH});
-  await fetch(SB_URL+'/rest/v1/reprocesos_data?id=eq.'+id,{method:'DELETE',headers:SBH});
-  await reproLoad();
-  renderReprocesos();
-  toast('✓ Lote eliminado','ok');
-}
-
 function renderReprocesos(){
   var lotes=DB.repro||[];
   var today=new Date().toISOString().slice(0,10);
