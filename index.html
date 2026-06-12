@@ -1658,6 +1658,7 @@ function processCtlRows(rows,fname){
     var cia=(r['CIA']||r['Cia']||'').trim();
 
     if(!grupos[dk])grupos[dk]={TM:{},TT:{},TN:{}};
+    if(!grupos[dk][turno])return; // turno inválido
     var ctlKey=ctrl+'|'+cia;
     if(!grupos[dk][turno][ctlKey])grupos[dk][turno][ctlKey]={items:0,unidadesRaw:0,first:dt,last:dt,cia:cia,user:ctrl};
     var divisor=CTL_DIVISOR[cia]||6;
