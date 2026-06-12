@@ -1732,7 +1732,7 @@ function processCtlRows(rows,fname){
               if(u.first<ex.first)newFirst=u.first;
               if(u.last>ex.last)newLast=u.last;
             }
-            map[u.user]=Object.assign({},ex,{items:newItems,first:newFirst,last:newLast,pct:Math.min(100,Math.round(newItems/(CTL_TARGET[ex.cia]||200)*100))});
+            map[u.user]=Object.assign({},ex,{items:newItems,unidades:(ex.unidades||0)+(u.unidades||0),first:newFirst,last:newLast,pct:Math.min(100,Math.round(newItems/(CTL_TARGET[ex.cia]||200)*100))});
           } else {
             map[u.user]=u;
           }
