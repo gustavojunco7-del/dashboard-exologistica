@@ -1651,7 +1651,13 @@ function processCtlRows(rows,fname){
     var dt=parseCtlFecha(fechaVal);
     if(!dt||isNaN(dt.getTime()))return;
     var dk=baseDateCTL(dt);
-    var turno=turnoFromCTL(dt);
+    var turnoRaw=(r['TURNO']||r['Turno']||'').trim();
+    var turno;
+    if(turnoRaw==='Mañana'||turnoRaw==='Manana')turno='TM';
+    else if(turnoRaw==='Tarde')turno='TT';
+    else if(turnoRaw==='Noche')turno='TN';
+    else turno=turnoFromCTL(dt);
+    if(turno!=='TM'&&turno!=='TT'&&turno!=='TN')return;
     var ctrl=(r['CONTROLADOR']||r['Controlador']||'').trim();
     if(!ctrl)return;
     var cant=parseFloat(String(r['CONTROLADO']||r['Controlado']||'0').replace(',','.'))||0;
