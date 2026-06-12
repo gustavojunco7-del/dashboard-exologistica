@@ -1679,7 +1679,7 @@ function processCtlRows(rows,fname){
       if(dt<grupos[dk][turno][ctlKey].first)grupos[dk][turno][ctlKey].first=dt;
       if(dt>grupos[dk][turno][ctlKey].last)grupos[dk][turno][ctlKey].last=dt;
     }
-    grupos[dk][turno][ctrl].cia=cia; // última CIA del usuario
+    grupos[dk][turno][ctlKey].cia=cia; // última CIA del usuario
   });
 
   // Convertir a array y calcular métricas
