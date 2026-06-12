@@ -1726,7 +1726,7 @@ function processCtlRows(rows,fname){
         var gap=Math.max(0,Math.round((u.first-startDt)/60000));
         var fmtH=function(d){return('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2);};
         dayData[sh].push({
-          user:ctrl,
+          user:u.user,
           items:Math.round(u.items),
           unidades:Math.round(u.unidadesRaw||0),
           cia:u.cia,
