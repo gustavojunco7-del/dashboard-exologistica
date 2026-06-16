@@ -1645,11 +1645,17 @@ function parseCtlFecha(v){
 async function sbUpsertCtl(nm, monthData){
   setSy(1);
   try{
-    var existing=await fetch(SB_URL+'/rest/v1/control_data?id=eq.'+nm+'&select=id',{headers:SBH});
+    // Primero traer datos existentes
+    var existing=await fetch(SB_URL+'/rest/v1/control_data?id=eq.'+nm+'&select=id,data',{headers:SBH});
     var rows=await existing.json();
+    var merged=monthData;
+    if(rows.length&&rows[0].data){
+      // Merge: los datos nuevos pisan los existentes día por día
+      merged=Object.assign({},rows[0].data,monthData);
+    }
     var method=rows.length?'PATCH':'POST';
     var url=SB_URL+'/rest/v1/control_data'+(method==='PATCH'?'?id=eq.'+nm:'');
-    var body=method==='PATCH'?{data:monthData}:{id:nm,data:monthData};
+    var body=method==='PATCH'?{data:merged}:{id:nm,data:merged};
     var r=await fetch(url,{method:method,headers:Object.assign({},SBH,{'Prefer':'return=minimal'}),body:JSON.stringify(body)});
     setSy(0,'ok');return r.ok;
   }catch(e){setSy(0,'er');return false;}
