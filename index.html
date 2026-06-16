@@ -1715,12 +1715,12 @@ function parseCtlFecha(v){
 async function sbUpsertCtl(nm, monthData){
   setSy(1);
   try{
-    // Primero traer datos existentes
+    // SIEMPRE traer lo que hay en Supabase primero y mergear
     var existing=await fetch(SB_URL+'/rest/v1/control_data?id=eq.'+nm+'&select=id,data',{headers:SBH});
     var rows=await existing.json();
     var merged=monthData;
     if(rows.length&&rows[0].data){
-      // Merge: los datos nuevos pisan los existentes día por día
+      // Merge: datos de Supabase + datos nuevos (nuevos pisan por día)
       merged=Object.assign({},rows[0].data,monthData);
     }
     var method=rows.length?'PATCH':'POST';
@@ -1855,9 +1855,9 @@ function processCtlRows(rows,fname){
     DB_CTL[dk]=dayData;
   });
 
-  // Guardar en Supabase por mes
+  // Guardar en Supabase por mes — solo los días nuevos, sbUpsertCtl mergea con Supabase
   var meses={};
-  Object.keys(DB_CTL).forEach(function(dk){
+  Object.keys(grupos).forEach(function(dk){
     var nm=dk.slice(0,7);
     if(!meses[nm])meses[nm]={};
     meses[nm][dk]=DB_CTL[dk];
