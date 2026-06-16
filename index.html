@@ -639,10 +639,6 @@ function readPickFile(f){
 async function loadPickDate(raw,dk){
   ldr(1,'Analizando...');
   try{
-    // Enriquecer SKU->BU antes de analizar
-    var skus=[];
-    raw.forEach(function(r){var ks=Object.keys(r);var sk=ks.find(function(k){return /^sku$/i.test(k);});if(sk&&r[sk])skus.push(String(r[sk]).trim());});
-    await enrichSkuBu(skus);
     var result=analyzePickDay(raw,dk);
     var total=['TM','TT','TN'].reduce(function(a,s){return a+(result[s]||[]).length;},0);
     if(!total){toast('Sin registros para esa fecha','err');ldr(0);return;}
