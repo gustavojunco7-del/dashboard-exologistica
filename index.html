@@ -258,7 +258,6 @@ function setSy(on,st){
 // ══ STATE ════════════════════════════════════════════════════════════════════
 var MOD='pick',PAGE='resumen',SEL=null,DEL=null,CUR=curMK(),CFG=lCfg();
 var DB={pick:{},cam:{},hk:{},cal:{}};
-var SKU_BU={}; // SKU -> BU lookup
 var APP_PASS='nike2025';
 var HK_ZONES=['Pasillo 700','Pasillo 800','Mezzanine N1','Mezzanine N2','Mezzanine N3'];
 var BKSL={TM:[{h:9,m:0,d:30},{h:12,m:0,d:60}],TT:[{h:18,m:0,d:30},{h:20,m:0,d:60}],TN:[{h:2,m:0,d:30},{h:4,m:0,d:60}]};
@@ -335,13 +334,11 @@ function analyzePickDay(raw,dk){
     var fk=ks.find(function(k){return /^inicio$/i.test(k);})||ks.find(function(k){return /fecha|date/i.test(k);});
     var uk=ks.find(function(k){return /usuario|user/i.test(k);});
     var qk=ks.find(function(k){return /cantidad|qty|items/i.test(k);});
-    var skk=ks.find(function(k){return /^sku$/i.test(k)||/^SKU$/i.test(k);});
     if(!fk||!uk)continue;
     var dt=parseFecha(r[fk]);if(!dt)continue;
     var u=String(r[uk]||'').trim();if(!u)continue;
     var q=parseFloat(String(r[qk]||'0').replace(',','.'))||0;
-    var sku=skk?String(r[skk]||'').trim():'';
-    if(dt>=wS&&dt<wE)rows.push({dt:dt,user:u,qty:q,sku:sku});
+    if(dt>=wS&&dt<wE)rows.push({dt:dt,user:u,qty:q});
   }
   function shOf(dt){var h=dt.getHours();if(h>=6&&h<14)return'TM';if(h>=14&&h<22)return'TT';return'TN';}
   var shifts={TM:[],TT:[],TN:[]};
@@ -356,19 +353,6 @@ function analyzePickDay(raw,dk){
       var picks=byU[user].sort(function(a,b){return a.dt-b.dt;});
       var times=picks.map(function(p){return p.dt;}),n=times.length;
       var units=picks.reduce(function(s,p){return s+p.qty;},0);
-      // CIA breakdown
-      var ciaCounts={FTW:0,APP:0,EQP:0,unknown:0};
-      picks.forEach(function(p){
-        var bu=p.sku?SKU_BU[p.sku]:null;
-        if(bu==='FTW')ciaCounts.FTW++;
-        else if(bu==='APP')ciaCounts.APP++;
-        else if(bu==='EQP')ciaCounts.EQP++;
-        else ciaCounts.unknown++;
-      });
-      // CIA dominante
-      var topCia='—';
-      var maxC=0;
-      ['FTW','APP','EQP'].forEach(function(c){if(ciaCounts[c]>maxC){maxC=ciaCounts[c];topCia=c;}});
       var preGap=Math.round(Math.max(0,(times[0]-sd)/60000-brkOverlap(sh,sd,times[0],[yr,mo,dy])));
       var inter=0;
       for(var i=0;i<n-1;i++){
@@ -380,7 +364,7 @@ function analyzePickDay(raw,dk){
       var elap=Math.max(0,Math.round((times[n-1]-sd)/60000));
       var prod=Math.max(0,elap-dead),iph=prod>0?Math.round(n/(prod/60)*10)/10:0;
       var elapsedMin=n>1?Math.round((times[n-1]-times[0])/60000):0;
-      users.push({user:user,items:n,units:Math.round(units),first:fmtT(times[0]),last:fmtT(times[n-1]),preGap:preGap,inter:inter,dead:dead,allowed:BRK(),exc:exc,prod:prod,iph:iph,elapsedMin:elapsedMin,cia:topCia,ciaCounts:ciaCounts});
+      users.push({user:user,items:n,units:Math.round(units),first:fmtT(times[0]),last:fmtT(times[n-1]),preGap:preGap,inter:inter,dead:dead,allowed:BRK(),exc:exc,prod:prod,iph:iph,elapsedMin:elapsedMin});
     });
     users.sort(function(a,b){return b.exc-a.exc;});
     result[sh]=users;
@@ -862,9 +846,9 @@ function render(){
 // ══ CONFIG RENDER ════════════════════════════════════════════════════════════
 function renderConfig(){
   document.getElementById('main').innerHTML=
-    '<div style="max-width:480px">'+
+    '<div style="max-width:420px">'+
     '<div style="font-size:15px;font-weight:700;margin-bottom:14px">⚙️ Configuración</div>'+
-    '<div class="tw" style="padding:18px;margin-bottom:16px">'+
+    '<div class="tw" style="padding:18px">'+
     '<div style="margin-bottom:14px">'+
     '<label style="font-size:11px;font-weight:700;color:var(--muted2);text-transform:uppercase;letter-spacing:.5px;display:block;margin-bottom:6px">Gap mínimo entre picks (min)</label>'+
     '<input type="number" id="cfgGap" value="'+(CFG.gap||15)+'" min="1" max="60" style="background:var(--panel2);border:1px solid var(--border);color:var(--text);border-radius:7px;padding:7px 11px;font-size:13px;font-family:inherit;width:120px">'+
@@ -878,77 +862,7 @@ function renderConfig(){
     '<input type="number" id="cfgHkt" value="'+Math.round((CFG.hk_target||0.95)*100)+'" min="50" max="100" style="background:var(--panel2);border:1px solid var(--border);color:var(--text);border-radius:7px;padding:7px 11px;font-size:13px;font-family:inherit;width:120px">'+
     '</div>'+
     '<button class="btn btn-p" onclick="saveConfig()">Guardar</button>'+
-    '</div>'+
-    // Maestro de artículos
-    '<div class="tw" style="padding:18px">'+
-    '<div style="font-size:13px;font-weight:700;margin-bottom:6px">📦 Maestro de Artículos (SKU → CIA)</div>'+
-    '<div style="font-size:11px;color:var(--muted2);margin-bottom:12px">Cargá el Excel del maestro de artículos para asociar cada SKU a su CIA (FTW/APP/EQP). Solo se necesita hacer una vez.</div>'+
-    '<div id="skuBuStatus" style="font-size:12px;color:var(--muted2);margin-bottom:10px">Verificando...</div>'+
-    '<div style="display:flex;gap:8px;align-items:center">'+
-    '<button class="btn btn-p btn-sm" onclick="document.getElementById(\'fiMaestro\').click()">Cargar maestro</button>'+
-    '<input type="file" id="fiMaestro" accept=".xlsx,.xls" onchange="loadMaestro(this.files[0])" style="display:none">'+
-    '</div>'+
     '</div></div>';
-  // Check cuántos SKUs hay cargados
-  fetch(SB_URL+'/rest/v1/sku_bu?select=sku&limit=1',{headers:SBH})
-    .then(function(r){return r.json();})
-    .then(function(d){
-      document.getElementById('skuBuStatus').textContent=d.length>0?'✅ Maestro cargado':'⚠️ Sin datos — cargá el maestro para activar productividad por CIA';
-      document.getElementById('skuBuStatus').style.color=d.length>0?'var(--green)':'var(--yellow)';
-    }).catch(function(){
-      document.getElementById('skuBuStatus').textContent='Sin datos cargados';
-    });
-}
-
-async function loadMaestro(file){
-  if(!file)return;
-  ldr(1,'Leyendo maestro...');
-  try{
-    var reader=new FileReader();
-    reader.onload=async function(e){
-      var wb=XLSX.read(e.target.result,{type:'array',raw:true});
-      var ws=wb.Sheets[wb.SheetNames[0]];
-      var rows=XLSX.utils.sheet_to_json(ws,{defval:''});
-      // Construir lookup Variante -> BU
-      var batch=[];
-      var seen=new Set();
-      rows.forEach(function(r){
-        var sku=String(r['Variante']||'').trim();
-        var bu=String(r['BU']||'').trim();
-        if(!sku||!bu||seen.has(sku))return;
-        seen.add(sku);
-        batch.push({sku:sku,bu:bu});
-      });
-      toast('Procesando '+batch.length+' SKUs...','ok');
-      ldr(1,'Cargando en Supabase (puede tardar unos minutos)...');
-      // Cargar en lotes de 1000
-      var BATCH=1000;
-      var errors=0;
-      for(var i=0;i<batch.length;i+=BATCH){
-        var chunk=batch.slice(i,i+BATCH);
-        try{
-          var r=await fetch(SB_URL+'/rest/v1/sku_bu',{
-            method:'POST',
-            headers:Object.assign({},SBH,{'Prefer':'resolution=merge-duplicates,return=minimal'}),
-            body:JSON.stringify(chunk)
-          });
-          if(!r.ok)errors++;
-        }catch(ex){errors++;}
-        // Update progress
-        ldr(1,'Cargando... '+(Math.round((i+BATCH)/batch.length*100))+'%');
-      }
-      ldr(0);
-      if(errors===0){
-        toast('✅ Maestro cargado — '+batch.length+' SKUs','ok');
-      } else {
-        toast('⚠️ Cargado con '+errors+' errores parciales','ok');
-      }
-      renderConfig();
-    };
-    reader.readAsArrayBuffer(file);
-  }catch(err){
-    toast('Error: '+err.message,'err');ldr(0);
-  }
 }
 function saveConfig(){
   CFG.gap=+document.getElementById('cfgGap').value||15;
@@ -1028,55 +942,31 @@ function renderPickResumen(){
 function renderPickRanking(){
   var ranking=pickRanking();
   if(!ranking.length){document.getElementById('main').innerHTML='<div class="no-data">Sin datos</div>';return;}
-
-  // Acumular CIA por usuario desde todos los días del mes
-  var userCIA={};
-  Object.keys(DB.pick).filter(function(dk){return dk.indexOf(CUR)===0;}).forEach(function(dk){
-    ['TM','TT','TN'].forEach(function(sh){
-      (DB.pick[dk][sh]||[]).forEach(function(u){
-        if(!userCIA[u.user])userCIA[u.user]={FTW:0,APP:0,EQP:0};
-        if(u.ciaCounts){userCIA[u.user].FTW+=(u.ciaCounts.FTW||0);userCIA[u.user].APP+=(u.ciaCounts.APP||0);userCIA[u.user].EQP+=(u.ciaCounts.EQP||0);}
-      });
-    });
-  });
-
-  function ciaBar(user){
-    var c=userCIA[user]||{FTW:0,APP:0,EQP:0};
-    var tot=c.FTW+c.APP+c.EQP;
-    if(!tot)return '<span style="color:var(--muted2);font-size:10px">—</span>';
-    var ftw=Math.round(c.FTW/tot*100),app=Math.round(c.APP/tot*100),eqp=100-ftw-app;
-    return '<div style="display:flex;gap:2px;align-items:center;min-width:80px">'+
-      (ftw>0?'<div style="height:8px;border-radius:2px;background:#FF6B00;width:'+ftw+'%;title:FTW '+ftw+'%"></div>':'')+
-      (app>0?'<div style="height:8px;border-radius:2px;background:#3b82f6;width:'+app+'%;title:APP '+app+'%"></div>':'')+
-      (eqp>0?'<div style="height:8px;border-radius:2px;background:#a78bfa;width:'+eqp+'%;title:EQP '+eqp+'%"></div>':'')+
-      '</div><div style="font-size:9px;color:var(--muted2);margin-top:2px">'+
-      (ftw>0?'<span style="color:#FF6B00">FTW '+ftw+'%</span> ':'')+
-      (app>0?'<span style="color:#3b82f6">APP '+app+'%</span> ':'')+
-      (eqp>0?'<span style="color:#a78bfa">EQP '+eqp+'%</span>':'')+
-      '</div>';
-  }
-
   var worst=ranking.map(function(r,i){
     var m=i===0?'🥇':i===1?'🥈':i===2?'🥉':(i+1)+'';
     var hsProd=Math.round(r.prod/60*10)/10;
     var hsDisp=Math.round(r.elapsed/60*10)/10;
     return '<tr><td>'+m+'</td><td class="tl">'+r.user+'</td><td>'+r.days+'</td><td>'+r.items.toLocaleString('es-AR')+'</td>'+
-      '<td>'+ciaBar(r.user)+'</td>'+
+      '<td>'+hsDisp+' hs</td>'+
+      '<td><strong style="color:var(--green)">'+hsProd+' hs</strong></td>'+
       '<td><strong>'+r.avg_iph+'</strong></td>'+
       '<td><strong style="color:'+(r.exc>0?'var(--red)':'var(--green)')+'">'+r.exc+' min</strong></td>'+
       '<td>'+Math.round(r.dead/60*10)/10+' hs</td><td>'+r.pct+'%</td></tr>';
   }).join('');
   var best=ranking.slice().sort(function(a,b){return b.avg_iph-a.avg_iph;}).map(function(r,i){
     var m=i===0?'🥇':i===1?'🥈':i===2?'🥉':(i+1)+'';
+    var hsProd2=Math.round(r.prod/60*10)/10;
+    var hsDisp2=Math.round(r.elapsed/60*10)/10;
     return '<tr><td>'+m+'</td><td class="tl">'+r.user+'</td><td>'+r.days+'</td><td>'+r.items.toLocaleString('es-AR')+'</td>'+
-      '<td>'+ciaBar(r.user)+'</td>'+
+      '<td>'+hsDisp2+' hs</td>'+
+      '<td><strong style="color:var(--green)">'+hsProd2+' hs</strong></td>'+
       '<td><strong class="ok">'+r.avg_iph+'</strong></td><td>'+r.exc+' min</td><td>'+r.pct+'%</td></tr>';
   }).join('');
   document.getElementById('main').innerHTML=
     '<div class="sec-t">🔴 Mayor Tiempo Excedente</div>'+
-    mkTable('Ranking · '+fmtMonth(CUR),'<tr><th>#</th><th>Usuario</th><th>Días</th><th>Items</th><th>CIA Mix</th><th>Productividad</th><th>Excedente acum.</th><th>T.Muerto</th><th>%</th></tr>',worst)+
+    mkTable('Ranking · '+fmtMonth(CUR),'<tr><th>#</th><th>Usuario</th><th>Días</th><th>Items</th><th>Hs Disponibles</th><th>Hs Productivas</th><th>Productividad</th><th>Excedente acum.</th><th>T.Muerto</th><th>%</th></tr>',worst)+
     '<div class="sec-t">🟢 Mayor Productividad</div>'+
-    mkTable('Items/hora promedio','<tr><th>#</th><th>Usuario</th><th>Días</th><th>Items</th><th>CIA Mix</th><th>Productividad</th><th>Excedente acum.</th><th>%</th></tr>',best);
+    mkTable('Items/hora promedio','<tr><th>#</th><th>Usuario</th><th>Días</th><th>Items</th><th>Hs Disponibles</th><th>Hs Productivas</th><th>Productividad</th><th>Excedente acum.</th><th>%</th></tr>',best);
 }
 function renderPickDias(){
   var days=Object.keys(DB.pick).filter(function(dk){return dk.indexOf(CUR)===0;}).sort();
@@ -1106,15 +996,14 @@ function renderPickDayDetail(dk){
     var u=day[s.k]||[];if(!u.length)return;
     var rows=u.map(function(r){
       var pd=r.prod+r.dead>0?r.dead/(r.prod+r.dead)*100:0;
-      var ciaCell=r.cia&&r.cia!=='—'?'<span style="font-size:10px;font-weight:700;padding:2px 6px;border-radius:4px;background:'+(r.cia==='FTW'?'#FF6B0025':r.cia==='APP'?'#3b82f625':'#a78bfa25')+';color:'+(r.cia==='FTW'?'var(--nike)':r.cia==='APP'?'#3b82f6':'#a78bfa')+'">'+r.cia+'</span>':'<span style="color:var(--muted2);font-size:11px">—</span>';
-      return '<tr><td class="tl">'+r.user+'</td><td>'+ciaCell+'</td><td>'+r.items+'</td><td>'+r.units+'</td>'+
+      return '<tr><td class="tl">'+r.user+'</td><td>'+r.items+'</td><td>'+r.units+'</td>'+
         '<td>'+r.first+'</td><td>'+r.last+'</td><td>'+r.preGap+' min</td><td>'+r.inter+' min</td>'+
         '<td><strong>'+r.dead+' min</strong></td><td>'+xBdg(r.exc)+'</td><td>'+r.prod+' min</td>'+
         '<td><strong>'+r.iph+'</strong></td><td>'+barEl(pd)+'</td></tr>';
     }).join('');
     var avgIph=u.length>0?Math.round(u.reduce(function(s,r){return s+r.iph;},0)/u.length*10)/10:0;
     html+=mkTable(s.l+' · '+u.length+' pickers · <span style="color:var(--green);font-weight:800">'+avgIph+' líneas/h</span>',
-      '<tr><th>Usuario</th><th>CIA</th><th>Items</th><th>Unid.</th><th>1er</th><th>Últ.</th><th>Gap Inicio</th><th>Breaks</th><th>T.Muerto</th><th>Excedente</th><th>T.Productivo</th><th>Items/h</th><th>%</th></tr>',rows);
+      '<tr><th>Usuario</th><th>Items</th><th>Unid.</th><th>1er</th><th>Últ.</th><th>Gap Inicio</th><th>Breaks</th><th>T.Muerto</th><th>Excedente</th><th>T.Productivo</th><th>Items/h</th><th>%</th></tr>',rows);
   });
   document.getElementById('main').innerHTML=html;
 }
@@ -1530,11 +1419,13 @@ function renderPickTendencias(){
     return;
   }
 
+  // Calcular datos por día y turno
   var labels=[];
   var dataProd={TM:[],TT:[],TN:[]};
   var dataMuerto={TM:[],TT:[],TN:[]};
-  var dataCIA={FTW:[],APP:[],EQP:[]};
   var TURNOS=['TM','TT','TN'];
+  var TOLERANCIA=20; // min excedente tolerado
+  var OBJ_LINEAS=200; // líneas objetivo por operario por turno
 
   days.forEach(function(dk){
     var day=DB.pick[dk];
@@ -1542,78 +1433,142 @@ function renderPickTendencias(){
     labels.push((+fp[2])+'/'+fp[1]);
     TURNOS.forEach(function(sh){
       var users=day[sh]||[];
-      if(!users.length){dataProd[sh].push(null);dataMuerto[sh].push(null);return;}
-      dataProd[sh].push(Math.round(users.reduce(function(s,u){return s+u.items;},0)/users.length));
-      dataMuerto[sh].push(Math.round(users.reduce(function(s,u){return s+u.exc;},0)/users.length));
-    });
-    // CIA breakdown
-    var ciaTotals={FTW:0,APP:0,EQP:0};
-    var ciaUsers={FTW:new Set(),APP:new Set(),EQP:new Set()};
-    TURNOS.forEach(function(sh){
-      (day[sh]||[]).forEach(function(u){
-        if(u.cia&&u.cia!=='—'&&ciaTotals[u.cia]!==undefined){
-          ciaTotals[u.cia]+=u.items;
-          ciaUsers[u.cia].add(u.user);
-        }
-      });
-    });
-    ['FTW','APP','EQP'].forEach(function(c){
-      var n=ciaUsers[c].size;
-      dataCIA[c].push(n>0?Math.round(ciaTotals[c]/n):null);
+      if(!users.length){
+        dataProd[sh].push(null);
+        dataMuerto[sh].push(null);
+        return;
+      }
+      // Productividad: promedio de líneas totales por operario
+      var avgLineas=Math.round(users.reduce(function(s,u){return s+u.items;},0)/users.length);
+      dataProd[sh].push(avgLineas);
+      // Tiempo muerto: promedio de excedente por operario (ya calculado en u.exc)
+      var avgExc=Math.round(users.reduce(function(s,u){return s+u.exc;},0)/users.length);
+      dataMuerto[sh].push(avgExc);
     });
   });
 
-  var html='<div style="padding:20px 0"><div style="display:grid;gap:16px">'+
-    // Productividad por turno
+  var html='<div style="padding:20px 0">'+
+    '<div style="display:grid;gap:24px">'+
+
+    // CARD 1: Productividad
     '<div style="background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:20px">'+
-      '<div style="display:flex;justify-content:space-between;margin-bottom:4px">'+
+      '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">'+
         '<div style="font-size:13px;font-weight:700">Productividad por Turno</div>'+
-        '<div style="font-size:11px;color:var(--muted2)">Líneas prom/operario · Objetivo: <span style="color:var(--green);font-weight:700">200 líneas</span></div>'+
-      '</div><canvas id="chartProd" height="80"></canvas></div>'+
-    // Productividad por CIA
+        '<div style="font-size:11px;color:var(--muted2)">Líneas promedio por operario · Objetivo: <span style="color:var(--green);font-weight:700">200 líneas</span></div>'+
+      '</div>'+
+      '<canvas id="chartProd" height="90"></canvas>'+
+    '</div>'+
+
+    // CARD 2: Tiempos muertos
     '<div style="background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:20px">'+
-      '<div style="display:flex;justify-content:space-between;margin-bottom:4px">'+
-        '<div style="font-size:13px;font-weight:700">Productividad por CIA (BU)</div>'+
-        '<div style="font-size:11px;color:var(--muted2)">Líneas prom/operario por negocio</div>'+
-      '</div><canvas id="chartCIA" height="80"></canvas></div>'+
-    // Tiempo muerto
-    '<div style="background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:20px">'+
-      '<div style="display:flex;justify-content:space-between;margin-bottom:4px">'+
+      '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">'+
         '<div style="font-size:13px;font-weight:700">Excedente de Tiempo Muerto por Turno</div>'+
-        '<div style="font-size:11px;color:var(--muted2)">Min prom sobre 90 permitidos · Tolerancia: <span style="color:var(--yellow);font-weight:700">20 min</span></div>'+
-      '</div><canvas id="chartMuerto" height="80"></canvas></div>'+
+        '<div style="font-size:11px;color:var(--muted2)">Minutos promedio sobre los 90 min permitidos · Tolerancia: <span style="color:var(--yellow);font-weight:700">20 min</span></div>'+
+      '</div>'+
+      '<canvas id="chartMuerto" height="90"></canvas>'+
+    '</div>'+
+
     '</div></div>';
 
   document.getElementById('main').innerHTML=html;
 
-  var baseOpts={responsive:true,interaction:{mode:'index',intersect:false},
-    plugins:{legend:{labels:{color:'#94a3b8',font:{size:11}}},tooltip:{backgroundColor:'#1a2235',titleColor:'#e2e8f0',bodyColor:'#94a3b8',borderColor:'#1e2d45',borderWidth:1}},
-    scales:{x:{ticks:{color:'#64748b',font:{size:11}},grid:{color:'#1e2d45'}},
-            y:{ticks:{color:'#64748b',font:{size:11}},grid:{color:'#1e2d45'},beginAtZero:true}}};
+  // Colores por turno
+  var colors={
+    TM:{border:'#FF6B00',bg:'rgba(255,107,0,0.15)'},
+    TT:{border:'#3b82f6',bg:'rgba(59,130,246,0.15)'},
+    TN:{border:'#a78bfa',bg:'rgba(167,139,250,0.15)'}
+  };
+  var labels_turno={TM:'Mañana 06-14',TT:'Tarde 14-22',TN:'Noche 22-06'};
 
-  // Chart 1: Productividad por turno
-  new Chart(document.getElementById('chartProd'),{type:'line',data:{labels:labels,datasets:[
-    {label:'Mañana',data:dataProd.TM,borderColor:'#E31E24',backgroundColor:'#E31E2415',borderWidth:2,pointRadius:4,tension:0.3,spanGaps:true},
-    {label:'Tarde',data:dataProd.TT,borderColor:'#1A2B5E',backgroundColor:'#1A2B5E15',borderWidth:2,pointRadius:4,tension:0.3,spanGaps:true},
-    {label:'Noche',data:dataProd.TN,borderColor:'#64748b',backgroundColor:'#64748b15',borderWidth:2,pointRadius:4,tension:0.3,spanGaps:true},
-    {label:'Objetivo (200)',data:labels.map(function(){return 200;}),borderColor:'rgba(34,197,94,0.6)',borderWidth:2,borderDash:[6,4],pointRadius:0,fill:false,tension:0}
-  ]},options:JSON.parse(JSON.stringify(baseOpts))});
+  // Chart 1: Productividad
+  new Chart(document.getElementById('chartProd'),{
+    type:'line',
+    data:{
+      labels:labels,
+      datasets:TURNOS.map(function(sh){return{
+        label:labels_turno[sh],
+        data:dataProd[sh],
+        borderColor:colors[sh].border,
+        backgroundColor:colors[sh].bg,
+        borderWidth:2,
+        pointRadius:4,
+        pointHoverRadius:6,
+        tension:0.3,
+        spanGaps:true
+      };}).concat([{
+        label:'Objetivo (300 b/op/turno)',
+        data:labels.map(function(){return 200;}),
+        borderColor:'rgba(34,197,94,0.6)',
+        borderWidth:2,
+        borderDash:[6,4],
+        pointRadius:0,
+        fill:false,
+        tension:0
+      }])
+    },
+    options:{
+      responsive:true,
+      interaction:{mode:'index',intersect:false},
+      plugins:{
+        legend:{labels:{color:'#94a3b8',font:{size:11}}},
+        tooltip:{backgroundColor:'#1a2235',titleColor:'#e2e8f0',bodyColor:'#94a3b8',borderColor:'#1e2d45',borderWidth:1}
+      },
+      scales:{
+        x:{ticks:{color:'#64748b',font:{size:11}},grid:{color:'#1e2d45'}},
+        y:{ticks:{color:'#64748b',font:{size:11}},grid:{color:'#1e2d45'},beginAtZero:true,
+          title:{display:true,text:'Líneas / operario',color:'#64748b',font:{size:11}}}
+      }
+    }
+  });
 
-  // Chart 2: Productividad por CIA
-  new Chart(document.getElementById('chartCIA'),{type:'line',data:{labels:labels,datasets:[
-    {label:'FTW',data:dataCIA.FTW,borderColor:'#FF6B00',backgroundColor:'#FF6B0015',borderWidth:2,pointRadius:4,tension:0.3,spanGaps:true},
-    {label:'APP',data:dataCIA.APP,borderColor:'#3b82f6',backgroundColor:'#3b82f615',borderWidth:2,pointRadius:4,tension:0.3,spanGaps:true},
-    {label:'EQP',data:dataCIA.EQP,borderColor:'#a78bfa',backgroundColor:'#a78bfa15',borderWidth:2,pointRadius:4,tension:0.3,spanGaps:true}
-  ]},options:JSON.parse(JSON.stringify(baseOpts))});
-
-  // Chart 3: Tiempo muerto
-  new Chart(document.getElementById('chartMuerto'),{type:'line',data:{labels:labels,datasets:[
-    {label:'Mañana',data:dataMuerto.TM,borderColor:'#E31E24',backgroundColor:'#E31E2415',borderWidth:2,pointRadius:4,tension:0.3,spanGaps:true},
-    {label:'Tarde',data:dataMuerto.TT,borderColor:'#1A2B5E',backgroundColor:'#1A2B5E15',borderWidth:2,pointRadius:4,tension:0.3,spanGaps:true},
-    {label:'Noche',data:dataMuerto.TN,borderColor:'#64748b',backgroundColor:'#64748b15',borderWidth:2,pointRadius:4,tension:0.3,spanGaps:true},
-    {label:'Tolerancia (20 min)',data:labels.map(function(){return 20;}),borderColor:'rgba(245,158,11,0.6)',borderWidth:2,borderDash:[6,4],pointRadius:0,fill:false,tension:0}
-  ]},options:JSON.parse(JSON.stringify(baseOpts))});
+  // Chart 2: Tiempo muerto
+  new Chart(document.getElementById('chartMuerto'),{
+    type:'line',
+    data:{
+      labels:labels,
+      datasets:TURNOS.map(function(sh){return{
+        label:labels_turno[sh],
+        data:dataMuerto[sh],
+        borderColor:colors[sh].border,
+        backgroundColor:colors[sh].bg,
+        borderWidth:2,
+        pointRadius:4,
+        pointHoverRadius:6,
+        tension:0.3,
+        spanGaps:true
+      };}).concat([{
+        label:'Tolerancia (20 min)',
+        data:labels.map(function(){return TOLERANCIA;}),
+        borderColor:'rgba(245,158,11,0.6)',
+        borderWidth:2,
+        borderDash:[6,4],
+        pointRadius:0,
+        fill:false,
+        tension:0
+      }])
+    },
+    options:{
+      responsive:true,
+      interaction:{mode:'index',intersect:false},
+      plugins:{
+        legend:{labels:{color:'#94a3b8',font:{size:11}}},
+        tooltip:{backgroundColor:'#1a2235',titleColor:'#e2e8f0',bodyColor:'#94a3b8',borderColor:'#1e2d45',borderWidth:1}
+      },
+      scales:{
+        x:{ticks:{color:'#64748b',font:{size:11}},grid:{color:'#1e2d45'}},
+        y:{ticks:{color:'#64748b',font:{size:11}},grid:{color:'#1e2d45'},beginAtZero:true,
+          title:{display:true,text:'Min excedente / operario',color:'#64748b',font:{size:11}}}
+      }
+    }
+  });
 }
+
+// ══ MESA CONTROL ═══════════════════════════════════════════════════════════
+var DB_CTL = {}; // {fecha: {TM:[],TT:[],TN:[]}}
+var CTL_CIA_FILTER = 'TODAS';
+var CTL_DIVISOR = {FTW:6, EQP:12, APP:18};
+var CTL_TARGET  = {FTW:200, EQP:200, APP:40};
+var TOL_CTL = 20;
 
 function baseDateCTL(dt){
   var h=dt.getHours();
@@ -1690,50 +1645,14 @@ function parseCtlFecha(v){
 async function sbUpsertCtl(nm, monthData){
   setSy(1);
   try{
-    // SIEMPRE traer lo que hay en Supabase primero y mergear
-    var existing=await fetch(SB_URL+'/rest/v1/control_data?id=eq.'+nm+'&select=id,data',{headers:SBH});
+    var existing=await fetch(SB_URL+'/rest/v1/control_data?id=eq.'+nm+'&select=id',{headers:SBH});
     var rows=await existing.json();
-    var merged=monthData;
-    if(rows.length&&rows[0].data){
-      // Merge: datos de Supabase + datos nuevos (nuevos pisan por día)
-      merged=Object.assign({},rows[0].data,monthData);
-    }
     var method=rows.length?'PATCH':'POST';
     var url=SB_URL+'/rest/v1/control_data'+(method==='PATCH'?'?id=eq.'+nm:'');
-    var body=method==='PATCH'?{data:merged}:{id:nm,data:merged};
+    var body=method==='PATCH'?{data:monthData}:{id:nm,data:monthData};
     var r=await fetch(url,{method:method,headers:Object.assign({},SBH,{'Prefer':'return=minimal'}),body:JSON.stringify(body)});
     setSy(0,'ok');return r.ok;
   }catch(e){setSy(0,'er');return false;}
-}
-
-async function loadSkuBu(){
-  // Carga lazy — no precargamos todo, se carga por demanda al procesar Excel
-  SKU_BU={};
-}
-
-async function enrichSkuBu(skus){
-  // Traer BUs solo para los SKUs del Excel actual
-  if(!skus||!skus.length)return;
-  var unique=[...new Set(skus)].filter(function(s){return s&&!SKU_BU[s];});
-  if(!unique.length)return;
-  // Supabase tiene límite de URL, dividir en lotes de 200
-  var BATCH=200;
-  for(var i=0;i<unique.length;i+=BATCH){
-    var chunk=unique.slice(i,i+BATCH);
-    try{
-      var filter='sku=in.('+chunk.join(',')+')';
-      var r=await fetch(SB_URL+'/rest/v1/sku_bu?select=sku,bu&'+filter,{headers:SBH});
-      if(!r.ok)continue;
-      var rows=await r.json();
-      rows.forEach(function(row){SKU_BU[row.sku]=row.bu;});
-    }catch(e){}
-  }
-}
-
-async function skuToBu(sku){
-  if(!sku)return null;
-  var s=String(sku).trim();
-  return SKU_BU[s]||null;
 }
 
 async function sbLoadCtl(){
@@ -1752,7 +1671,6 @@ function processCtlRows(rows,fname){
   // Parsear y agrupar por fecha base + turno + controlador
   var grupos={}; // {dk: {TM:{user:{items,first,last}}, TT:{}, TN:{}}}
   rows.forEach(function(r){
-    try{
     var fechaVal=r['FECHA HORA']||r['Fecha Hora']||r['fecha hora']||'';
     if(!fechaVal&&fechaVal!==0)return;
     var dt=parseCtlFecha(fechaVal);
@@ -1787,7 +1705,6 @@ function processCtlRows(rows,fname){
       if(dt>grupos[dk][turno][ctlKey].last)grupos[dk][turno][ctlKey].last=dt;
     }
     grupos[dk][turno][ctlKey].cia=cia; // última CIA del usuario
-    }catch(e){} // ignorar filas inválidas
   });
 
   // Convertir a array y calcular métricas
@@ -1809,7 +1726,7 @@ function processCtlRows(rows,fname){
         var gap=Math.max(0,Math.round((u.first-startDt)/60000));
         var fmtH=function(d){return('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2);};
         dayData[sh].push({
-          user:u.user,
+          user:ctrl,
           items:Math.round(u.items),
           unidades:Math.round(u.unidadesRaw||0),
           cia:u.cia,
@@ -1838,7 +1755,7 @@ function processCtlRows(rows,fname){
           var mk=u.user+'|'+u.cia;
           if(map[mk]){
             // Sumar items, tomar primer/último según turno
-            var ex=map[mk];
+            var ex=map[u.user];
             var newItems=ex.items+u.items;
             var newFirst=ex.first, newLast=ex.last;
             if(sh==='TN'){
@@ -1860,12 +1777,12 @@ function processCtlRows(rows,fname){
     DB_CTL[dk]=dayData;
   });
 
-  // Guardar en Supabase por mes — solo los días nuevos, sbUpsertCtl mergea con Supabase
+  // Guardar en Supabase por mes
   var meses={};
-  Object.keys(grupos).forEach(function(dk){
+  Object.keys(DB_CTL).forEach(function(dk){
     var nm=dk.slice(0,7);
     if(!meses[nm])meses[nm]={};
-    meses[nm][dk]=DB_CTL[dk]||{}; // usar lo que está en DB_CTL, fallback a objeto vacío
+    meses[nm][dk]=DB_CTL[dk];
   });
   var saves=Object.keys(meses).map(function(nm){
     return sbUpsertCtl(nm,meses[nm]);
@@ -2224,7 +2141,6 @@ async function init(){
     sbGetOut(CUR).then(function(o){if(o){window.CAM_OUT=o;try{localStorage.setItem('cam_out_'+CUR,o);}catch(e){};}});
     await sbLoadCtl();
     await reproLoad();
-    await loadSkuBu(); // esperar lookup completo antes de renderizar
     updNav();render();
   }catch(e){
     document.getElementById('main').innerHTML='<div class="no-data">❌ Error conectando. Verificá tu conexión.</div>';
