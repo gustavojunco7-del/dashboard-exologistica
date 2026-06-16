@@ -639,6 +639,10 @@ function readPickFile(f){
 async function loadPickDate(raw,dk){
   ldr(1,'Analizando...');
   try{
+    // Enriquecer SKU->BU antes de analizar
+    var skus=[];
+    raw.forEach(function(r){var ks=Object.keys(r);var sk=ks.find(function(k){return /^sku$/i.test(k);});if(sk&&r[sk])skus.push(String(r[sk]).trim());});
+    await enrichSkuBu(skus);
     var result=analyzePickDay(raw,dk);
     var total=['TM','TT','TN'].reduce(function(a,s){return a+(result[s]||[]).length;},0);
     if(!total){toast('Sin registros para esa fecha','err');ldr(0);return;}
@@ -1028,31 +1032,55 @@ function renderPickResumen(){
 function renderPickRanking(){
   var ranking=pickRanking();
   if(!ranking.length){document.getElementById('main').innerHTML='<div class="no-data">Sin datos</div>';return;}
+
+  // Acumular CIA por usuario desde todos los días del mes
+  var userCIA={};
+  Object.keys(DB.pick).filter(function(dk){return dk.indexOf(CUR)===0;}).forEach(function(dk){
+    ['TM','TT','TN'].forEach(function(sh){
+      (DB.pick[dk][sh]||[]).forEach(function(u){
+        if(!userCIA[u.user])userCIA[u.user]={FTW:0,APP:0,EQP:0};
+        if(u.ciaCounts){userCIA[u.user].FTW+=(u.ciaCounts.FTW||0);userCIA[u.user].APP+=(u.ciaCounts.APP||0);userCIA[u.user].EQP+=(u.ciaCounts.EQP||0);}
+      });
+    });
+  });
+
+  function ciaBar(user){
+    var c=userCIA[user]||{FTW:0,APP:0,EQP:0};
+    var tot=c.FTW+c.APP+c.EQP;
+    if(!tot)return '<span style="color:var(--muted2);font-size:10px">—</span>';
+    var ftw=Math.round(c.FTW/tot*100),app=Math.round(c.APP/tot*100),eqp=100-ftw-app;
+    return '<div style="display:flex;gap:2px;align-items:center;min-width:80px">'+
+      (ftw>0?'<div style="height:8px;border-radius:2px;background:#FF6B00;width:'+ftw+'%;title:FTW '+ftw+'%"></div>':'')+
+      (app>0?'<div style="height:8px;border-radius:2px;background:#3b82f6;width:'+app+'%;title:APP '+app+'%"></div>':'')+
+      (eqp>0?'<div style="height:8px;border-radius:2px;background:#a78bfa;width:'+eqp+'%;title:EQP '+eqp+'%"></div>':'')+
+      '</div><div style="font-size:9px;color:var(--muted2);margin-top:2px">'+
+      (ftw>0?'<span style="color:#FF6B00">FTW '+ftw+'%</span> ':'')+
+      (app>0?'<span style="color:#3b82f6">APP '+app+'%</span> ':'')+
+      (eqp>0?'<span style="color:#a78bfa">EQP '+eqp+'%</span>':'')+
+      '</div>';
+  }
+
   var worst=ranking.map(function(r,i){
     var m=i===0?'🥇':i===1?'🥈':i===2?'🥉':(i+1)+'';
     var hsProd=Math.round(r.prod/60*10)/10;
     var hsDisp=Math.round(r.elapsed/60*10)/10;
     return '<tr><td>'+m+'</td><td class="tl">'+r.user+'</td><td>'+r.days+'</td><td>'+r.items.toLocaleString('es-AR')+'</td>'+
-      '<td>'+hsDisp+' hs</td>'+
-      '<td><strong style="color:var(--green)">'+hsProd+' hs</strong></td>'+
+      '<td>'+ciaBar(r.user)+'</td>'+
       '<td><strong>'+r.avg_iph+'</strong></td>'+
       '<td><strong style="color:'+(r.exc>0?'var(--red)':'var(--green)')+'">'+r.exc+' min</strong></td>'+
       '<td>'+Math.round(r.dead/60*10)/10+' hs</td><td>'+r.pct+'%</td></tr>';
   }).join('');
   var best=ranking.slice().sort(function(a,b){return b.avg_iph-a.avg_iph;}).map(function(r,i){
     var m=i===0?'🥇':i===1?'🥈':i===2?'🥉':(i+1)+'';
-    var hsProd2=Math.round(r.prod/60*10)/10;
-    var hsDisp2=Math.round(r.elapsed/60*10)/10;
     return '<tr><td>'+m+'</td><td class="tl">'+r.user+'</td><td>'+r.days+'</td><td>'+r.items.toLocaleString('es-AR')+'</td>'+
-      '<td>'+hsDisp2+' hs</td>'+
-      '<td><strong style="color:var(--green)">'+hsProd2+' hs</strong></td>'+
+      '<td>'+ciaBar(r.user)+'</td>'+
       '<td><strong class="ok">'+r.avg_iph+'</strong></td><td>'+r.exc+' min</td><td>'+r.pct+'%</td></tr>';
   }).join('');
   document.getElementById('main').innerHTML=
     '<div class="sec-t">🔴 Mayor Tiempo Excedente</div>'+
-    mkTable('Ranking · '+fmtMonth(CUR),'<tr><th>#</th><th>Usuario</th><th>Días</th><th>Items</th><th>Hs Disponibles</th><th>Hs Productivas</th><th>Productividad</th><th>Excedente acum.</th><th>T.Muerto</th><th>%</th></tr>',worst)+
+    mkTable('Ranking · '+fmtMonth(CUR),'<tr><th>#</th><th>Usuario</th><th>Días</th><th>Items</th><th>CIA Mix</th><th>Productividad</th><th>Excedente acum.</th><th>T.Muerto</th><th>%</th></tr>',worst)+
     '<div class="sec-t">🟢 Mayor Productividad</div>'+
-    mkTable('Items/hora promedio','<tr><th>#</th><th>Usuario</th><th>Días</th><th>Items</th><th>Hs Disponibles</th><th>Hs Productivas</th><th>Productividad</th><th>Excedente acum.</th><th>%</th></tr>',best);
+    mkTable('Items/hora promedio','<tr><th>#</th><th>Usuario</th><th>Días</th><th>Items</th><th>CIA Mix</th><th>Productividad</th><th>Excedente acum.</th><th>%</th></tr>',best);
 }
 function renderPickDias(){
   var days=Object.keys(DB.pick).filter(function(dk){return dk.indexOf(CUR)===0;}).sort();
@@ -1506,13 +1534,11 @@ function renderPickTendencias(){
     return;
   }
 
-  // Calcular datos por día y turno
   var labels=[];
   var dataProd={TM:[],TT:[],TN:[]};
   var dataMuerto={TM:[],TT:[],TN:[]};
+  var dataCIA={FTW:[],APP:[],EQP:[]};
   var TURNOS=['TM','TT','TN'];
-  var TOLERANCIA=20; // min excedente tolerado
-  var OBJ_LINEAS=200; // líneas objetivo por operario por turno
 
   days.forEach(function(dk){
     var day=DB.pick[dk];
@@ -1520,142 +1546,78 @@ function renderPickTendencias(){
     labels.push((+fp[2])+'/'+fp[1]);
     TURNOS.forEach(function(sh){
       var users=day[sh]||[];
-      if(!users.length){
-        dataProd[sh].push(null);
-        dataMuerto[sh].push(null);
-        return;
-      }
-      // Productividad: promedio de líneas totales por operario
-      var avgLineas=Math.round(users.reduce(function(s,u){return s+u.items;},0)/users.length);
-      dataProd[sh].push(avgLineas);
-      // Tiempo muerto: promedio de excedente por operario (ya calculado en u.exc)
-      var avgExc=Math.round(users.reduce(function(s,u){return s+u.exc;},0)/users.length);
-      dataMuerto[sh].push(avgExc);
+      if(!users.length){dataProd[sh].push(null);dataMuerto[sh].push(null);return;}
+      dataProd[sh].push(Math.round(users.reduce(function(s,u){return s+u.items;},0)/users.length));
+      dataMuerto[sh].push(Math.round(users.reduce(function(s,u){return s+u.exc;},0)/users.length));
+    });
+    // CIA breakdown
+    var ciaTotals={FTW:0,APP:0,EQP:0};
+    var ciaUsers={FTW:new Set(),APP:new Set(),EQP:new Set()};
+    TURNOS.forEach(function(sh){
+      (day[sh]||[]).forEach(function(u){
+        if(u.cia&&u.cia!=='—'&&ciaTotals[u.cia]!==undefined){
+          ciaTotals[u.cia]+=u.items;
+          ciaUsers[u.cia].add(u.user);
+        }
+      });
+    });
+    ['FTW','APP','EQP'].forEach(function(c){
+      var n=ciaUsers[c].size;
+      dataCIA[c].push(n>0?Math.round(ciaTotals[c]/n):null);
     });
   });
 
-  var html='<div style="padding:20px 0">'+
-    '<div style="display:grid;gap:24px">'+
-
-    // CARD 1: Productividad
+  var html='<div style="padding:20px 0"><div style="display:grid;gap:16px">'+
+    // Productividad por turno
     '<div style="background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:20px">'+
-      '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">'+
+      '<div style="display:flex;justify-content:space-between;margin-bottom:4px">'+
         '<div style="font-size:13px;font-weight:700">Productividad por Turno</div>'+
-        '<div style="font-size:11px;color:var(--muted2)">Líneas promedio por operario · Objetivo: <span style="color:var(--green);font-weight:700">200 líneas</span></div>'+
-      '</div>'+
-      '<canvas id="chartProd" height="90"></canvas>'+
-    '</div>'+
-
-    // CARD 2: Tiempos muertos
+        '<div style="font-size:11px;color:var(--muted2)">Líneas prom/operario · Objetivo: <span style="color:var(--green);font-weight:700">200 líneas</span></div>'+
+      '</div><canvas id="chartProd" height="80"></canvas></div>'+
+    // Productividad por CIA
     '<div style="background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:20px">'+
-      '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">'+
+      '<div style="display:flex;justify-content:space-between;margin-bottom:4px">'+
+        '<div style="font-size:13px;font-weight:700">Productividad por CIA (BU)</div>'+
+        '<div style="font-size:11px;color:var(--muted2)">Líneas prom/operario por negocio</div>'+
+      '</div><canvas id="chartCIA" height="80"></canvas></div>'+
+    // Tiempo muerto
+    '<div style="background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:20px">'+
+      '<div style="display:flex;justify-content:space-between;margin-bottom:4px">'+
         '<div style="font-size:13px;font-weight:700">Excedente de Tiempo Muerto por Turno</div>'+
-        '<div style="font-size:11px;color:var(--muted2)">Minutos promedio sobre los 90 min permitidos · Tolerancia: <span style="color:var(--yellow);font-weight:700">20 min</span></div>'+
-      '</div>'+
-      '<canvas id="chartMuerto" height="90"></canvas>'+
-    '</div>'+
-
+        '<div style="font-size:11px;color:var(--muted2)">Min prom sobre 90 permitidos · Tolerancia: <span style="color:var(--yellow);font-weight:700">20 min</span></div>'+
+      '</div><canvas id="chartMuerto" height="80"></canvas></div>'+
     '</div></div>';
 
   document.getElementById('main').innerHTML=html;
 
-  // Colores por turno
-  var colors={
-    TM:{border:'#FF6B00',bg:'rgba(255,107,0,0.15)'},
-    TT:{border:'#3b82f6',bg:'rgba(59,130,246,0.15)'},
-    TN:{border:'#a78bfa',bg:'rgba(167,139,250,0.15)'}
-  };
-  var labels_turno={TM:'Mañana 06-14',TT:'Tarde 14-22',TN:'Noche 22-06'};
+  var baseOpts={responsive:true,interaction:{mode:'index',intersect:false},
+    plugins:{legend:{labels:{color:'#94a3b8',font:{size:11}}},tooltip:{backgroundColor:'#1a2235',titleColor:'#e2e8f0',bodyColor:'#94a3b8',borderColor:'#1e2d45',borderWidth:1}},
+    scales:{x:{ticks:{color:'#64748b',font:{size:11}},grid:{color:'#1e2d45'}},
+            y:{ticks:{color:'#64748b',font:{size:11}},grid:{color:'#1e2d45'},beginAtZero:true}}};
 
-  // Chart 1: Productividad
-  new Chart(document.getElementById('chartProd'),{
-    type:'line',
-    data:{
-      labels:labels,
-      datasets:TURNOS.map(function(sh){return{
-        label:labels_turno[sh],
-        data:dataProd[sh],
-        borderColor:colors[sh].border,
-        backgroundColor:colors[sh].bg,
-        borderWidth:2,
-        pointRadius:4,
-        pointHoverRadius:6,
-        tension:0.3,
-        spanGaps:true
-      };}).concat([{
-        label:'Objetivo (300 b/op/turno)',
-        data:labels.map(function(){return 200;}),
-        borderColor:'rgba(34,197,94,0.6)',
-        borderWidth:2,
-        borderDash:[6,4],
-        pointRadius:0,
-        fill:false,
-        tension:0
-      }])
-    },
-    options:{
-      responsive:true,
-      interaction:{mode:'index',intersect:false},
-      plugins:{
-        legend:{labels:{color:'#94a3b8',font:{size:11}}},
-        tooltip:{backgroundColor:'#1a2235',titleColor:'#e2e8f0',bodyColor:'#94a3b8',borderColor:'#1e2d45',borderWidth:1}
-      },
-      scales:{
-        x:{ticks:{color:'#64748b',font:{size:11}},grid:{color:'#1e2d45'}},
-        y:{ticks:{color:'#64748b',font:{size:11}},grid:{color:'#1e2d45'},beginAtZero:true,
-          title:{display:true,text:'Líneas / operario',color:'#64748b',font:{size:11}}}
-      }
-    }
-  });
+  // Chart 1: Productividad por turno
+  new Chart(document.getElementById('chartProd'),{type:'line',data:{labels:labels,datasets:[
+    {label:'Mañana',data:dataProd.TM,borderColor:'#E31E24',backgroundColor:'#E31E2415',borderWidth:2,pointRadius:4,tension:0.3,spanGaps:true},
+    {label:'Tarde',data:dataProd.TT,borderColor:'#1A2B5E',backgroundColor:'#1A2B5E15',borderWidth:2,pointRadius:4,tension:0.3,spanGaps:true},
+    {label:'Noche',data:dataProd.TN,borderColor:'#64748b',backgroundColor:'#64748b15',borderWidth:2,pointRadius:4,tension:0.3,spanGaps:true},
+    {label:'Objetivo (200)',data:labels.map(function(){return 200;}),borderColor:'rgba(34,197,94,0.6)',borderWidth:2,borderDash:[6,4],pointRadius:0,fill:false,tension:0}
+  ]},options:JSON.parse(JSON.stringify(baseOpts))});
 
-  // Chart 2: Tiempo muerto
-  new Chart(document.getElementById('chartMuerto'),{
-    type:'line',
-    data:{
-      labels:labels,
-      datasets:TURNOS.map(function(sh){return{
-        label:labels_turno[sh],
-        data:dataMuerto[sh],
-        borderColor:colors[sh].border,
-        backgroundColor:colors[sh].bg,
-        borderWidth:2,
-        pointRadius:4,
-        pointHoverRadius:6,
-        tension:0.3,
-        spanGaps:true
-      };}).concat([{
-        label:'Tolerancia (20 min)',
-        data:labels.map(function(){return TOLERANCIA;}),
-        borderColor:'rgba(245,158,11,0.6)',
-        borderWidth:2,
-        borderDash:[6,4],
-        pointRadius:0,
-        fill:false,
-        tension:0
-      }])
-    },
-    options:{
-      responsive:true,
-      interaction:{mode:'index',intersect:false},
-      plugins:{
-        legend:{labels:{color:'#94a3b8',font:{size:11}}},
-        tooltip:{backgroundColor:'#1a2235',titleColor:'#e2e8f0',bodyColor:'#94a3b8',borderColor:'#1e2d45',borderWidth:1}
-      },
-      scales:{
-        x:{ticks:{color:'#64748b',font:{size:11}},grid:{color:'#1e2d45'}},
-        y:{ticks:{color:'#64748b',font:{size:11}},grid:{color:'#1e2d45'},beginAtZero:true,
-          title:{display:true,text:'Min excedente / operario',color:'#64748b',font:{size:11}}}
-      }
-    }
-  });
+  // Chart 2: Productividad por CIA
+  new Chart(document.getElementById('chartCIA'),{type:'line',data:{labels:labels,datasets:[
+    {label:'FTW',data:dataCIA.FTW,borderColor:'#FF6B00',backgroundColor:'#FF6B0015',borderWidth:2,pointRadius:4,tension:0.3,spanGaps:true},
+    {label:'APP',data:dataCIA.APP,borderColor:'#3b82f6',backgroundColor:'#3b82f615',borderWidth:2,pointRadius:4,tension:0.3,spanGaps:true},
+    {label:'EQP',data:dataCIA.EQP,borderColor:'#a78bfa',backgroundColor:'#a78bfa15',borderWidth:2,pointRadius:4,tension:0.3,spanGaps:true}
+  ]},options:JSON.parse(JSON.stringify(baseOpts))});
+
+  // Chart 3: Tiempo muerto
+  new Chart(document.getElementById('chartMuerto'),{type:'line',data:{labels:labels,datasets:[
+    {label:'Mañana',data:dataMuerto.TM,borderColor:'#E31E24',backgroundColor:'#E31E2415',borderWidth:2,pointRadius:4,tension:0.3,spanGaps:true},
+    {label:'Tarde',data:dataMuerto.TT,borderColor:'#1A2B5E',backgroundColor:'#1A2B5E15',borderWidth:2,pointRadius:4,tension:0.3,spanGaps:true},
+    {label:'Noche',data:dataMuerto.TN,borderColor:'#64748b',backgroundColor:'#64748b15',borderWidth:2,pointRadius:4,tension:0.3,spanGaps:true},
+    {label:'Tolerancia (20 min)',data:labels.map(function(){return 20;}),borderColor:'rgba(245,158,11,0.6)',borderWidth:2,borderDash:[6,4],pointRadius:0,fill:false,tension:0}
+  ]},options:JSON.parse(JSON.stringify(baseOpts))});
 }
-
-// ══ MESA CONTROL ═══════════════════════════════════════════════════════════
-var DB_CTL = {}; // {fecha: {TM:[],TT:[],TN:[]}}
-var CTL_CIA_FILTER = 'TODAS';
-var CTL_DIVISOR = {FTW:6, EQP:12, APP:18};
-var CTL_TARGET  = {FTW:200, EQP:200, APP:40};
-var TOL_CTL = 20;
 
 function baseDateCTL(dt){
   var h=dt.getHours();
@@ -1749,17 +1711,27 @@ async function sbUpsertCtl(nm, monthData){
 }
 
 async function loadSkuBu(){
-  try{
-    var page=0, limit=5000, done=false;
-    while(!done){
-      var r=await fetch(SB_URL+'/rest/v1/sku_bu?select=sku,bu&limit='+limit+'&offset='+(page*limit),{headers:SBH});
-      if(!r.ok)break;
+  // Carga lazy — no precargamos todo, se carga por demanda al procesar Excel
+  SKU_BU={};
+}
+
+async function enrichSkuBu(skus){
+  // Traer BUs solo para los SKUs del Excel actual
+  if(!skus||!skus.length)return;
+  var unique=[...new Set(skus)].filter(function(s){return s&&!SKU_BU[s];});
+  if(!unique.length)return;
+  // Supabase tiene límite de URL, dividir en lotes de 200
+  var BATCH=200;
+  for(var i=0;i<unique.length;i+=BATCH){
+    var chunk=unique.slice(i,i+BATCH);
+    try{
+      var filter='sku=in.('+chunk.join(',')+')';
+      var r=await fetch(SB_URL+'/rest/v1/sku_bu?select=sku,bu&'+filter,{headers:SBH});
+      if(!r.ok)continue;
       var rows=await r.json();
       rows.forEach(function(row){SKU_BU[row.sku]=row.bu;});
-      if(rows.length<limit)done=true;
-      page++;
-    }
-  }catch(e){}
+    }catch(e){}
+  }
 }
 
 async function skuToBu(sku){
