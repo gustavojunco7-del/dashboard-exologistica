@@ -258,7 +258,8 @@ function setSy(on,st){
 // ══ STATE ════════════════════════════════════════════════════════════════════
 var MOD='pick',PAGE='resumen',SEL=null,DEL=null,CUR=curMK(),CFG=lCfg();
 var DB={pick:{},cam:{},hk:{},cal:{}};
-var SKU_BU={}; // SKU -> BU lookup
+var SKU_BU={};
+var DB_CTL={};
 var APP_PASS='nike2025';
 var HK_ZONES=['Pasillo 700','Pasillo 800','Mezzanine N1','Mezzanine N2','Mezzanine N3'];
 var BKSL={TM:[{h:9,m:0,d:30},{h:12,m:0,d:60}],TT:[{h:18,m:0,d:30},{h:20,m:0,d:60}],TN:[{h:2,m:0,d:30},{h:4,m:0,d:60}]};
@@ -2222,10 +2223,11 @@ async function init(){
     DB.pick=await sbGet('pick',CUR);
     try{var lsOut=localStorage.getItem('cam_out_'+CUR);if(lsOut)window.CAM_OUT=+lsOut;}catch(e){}
     sbGetOut(CUR).then(function(o){if(o){window.CAM_OUT=o;try{localStorage.setItem('cam_out_'+CUR,o);}catch(e){};}});
-    await sbLoadCtl();
-    await reproLoad();
+    try{await sbLoadCtl();}catch(e){console.log('sbLoadCtl error:',e);}
+    try{await reproLoad();}catch(e){console.log('reproLoad error:',e);}
     updNav();render();
   }catch(e){
+    console.log('Init error:',e);
     document.getElementById('main').innerHTML='<div class="no-data">❌ Error conectando. Verificá tu conexión.</div>';
   }
   ldr(0);
