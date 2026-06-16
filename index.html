@@ -846,9 +846,9 @@ function render(){
 // ══ CONFIG RENDER ════════════════════════════════════════════════════════════
 function renderConfig(){
   document.getElementById('main').innerHTML=
-    '<div style="max-width:420px">'+
+    '<div style="max-width:480px">'+
     '<div style="font-size:15px;font-weight:700;margin-bottom:14px">⚙️ Configuración</div>'+
-    '<div class="tw" style="padding:18px">'+
+    '<div class="tw" style="padding:18px;margin-bottom:16px">'+
     '<div style="margin-bottom:14px">'+
     '<label style="font-size:11px;font-weight:700;color:var(--muted2);text-transform:uppercase;letter-spacing:.5px;display:block;margin-bottom:6px">Gap mínimo entre picks (min)</label>'+
     '<input type="number" id="cfgGap" value="'+(CFG.gap||15)+'" min="1" max="60" style="background:var(--panel2);border:1px solid var(--border);color:var(--text);border-radius:7px;padding:7px 11px;font-size:13px;font-family:inherit;width:120px">'+
@@ -862,7 +862,77 @@ function renderConfig(){
     '<input type="number" id="cfgHkt" value="'+Math.round((CFG.hk_target||0.95)*100)+'" min="50" max="100" style="background:var(--panel2);border:1px solid var(--border);color:var(--text);border-radius:7px;padding:7px 11px;font-size:13px;font-family:inherit;width:120px">'+
     '</div>'+
     '<button class="btn btn-p" onclick="saveConfig()">Guardar</button>'+
+    '</div>'+
+    // Maestro de artículos
+    '<div class="tw" style="padding:18px">'+
+    '<div style="font-size:13px;font-weight:700;margin-bottom:6px">📦 Maestro de Artículos (SKU → CIA)</div>'+
+    '<div style="font-size:11px;color:var(--muted2);margin-bottom:12px">Cargá el Excel del maestro de artículos para asociar cada SKU a su CIA (FTW/APP/EQP). Solo se necesita hacer una vez.</div>'+
+    '<div id="skuBuStatus" style="font-size:12px;color:var(--muted2);margin-bottom:10px">Verificando...</div>'+
+    '<div style="display:flex;gap:8px;align-items:center">'+
+    '<button class="btn btn-p btn-sm" onclick="document.getElementById(\'fiMaestro\').click()">Cargar maestro</button>'+
+    '<input type="file" id="fiMaestro" accept=".xlsx,.xls" onchange="loadMaestro(this.files[0])" style="display:none">'+
+    '</div>'+
     '</div></div>';
+  // Check cuántos SKUs hay cargados
+  fetch(SB_URL+'/rest/v1/sku_bu?select=sku&limit=1',{headers:SBH})
+    .then(function(r){return r.json();})
+    .then(function(d){
+      document.getElementById('skuBuStatus').textContent=d.length>0?'✅ Maestro cargado':'⚠️ Sin datos — cargá el maestro para activar productividad por CIA';
+      document.getElementById('skuBuStatus').style.color=d.length>0?'var(--green)':'var(--yellow)';
+    }).catch(function(){
+      document.getElementById('skuBuStatus').textContent='Sin datos cargados';
+    });
+}
+
+async function loadMaestro(file){
+  if(!file)return;
+  ldr(1,'Leyendo maestro...');
+  try{
+    var reader=new FileReader();
+    reader.onload=async function(e){
+      var wb=XLSX.read(e.target.result,{type:'array',raw:true});
+      var ws=wb.Sheets[wb.SheetNames[0]];
+      var rows=XLSX.utils.sheet_to_json(ws,{defval:''});
+      // Construir lookup Variante -> BU
+      var batch=[];
+      var seen=new Set();
+      rows.forEach(function(r){
+        var sku=String(r['Variante']||'').trim();
+        var bu=String(r['BU']||'').trim();
+        if(!sku||!bu||seen.has(sku))return;
+        seen.add(sku);
+        batch.push({sku:sku,bu:bu});
+      });
+      toast('Procesando '+batch.length+' SKUs...','ok');
+      ldr(1,'Cargando en Supabase (puede tardar unos minutos)...');
+      // Cargar en lotes de 1000
+      var BATCH=1000;
+      var errors=0;
+      for(var i=0;i<batch.length;i+=BATCH){
+        var chunk=batch.slice(i,i+BATCH);
+        try{
+          var r=await fetch(SB_URL+'/rest/v1/sku_bu',{
+            method:'POST',
+            headers:Object.assign({},SBH,{'Prefer':'resolution=merge-duplicates,return=minimal'}),
+            body:JSON.stringify(chunk)
+          });
+          if(!r.ok)errors++;
+        }catch(ex){errors++;}
+        // Update progress
+        ldr(1,'Cargando... '+(Math.round((i+BATCH)/batch.length*100))+'%');
+      }
+      ldr(0);
+      if(errors===0){
+        toast('✅ Maestro cargado — '+batch.length+' SKUs','ok');
+      } else {
+        toast('⚠️ Cargado con '+errors+' errores parciales','ok');
+      }
+      renderConfig();
+    };
+    reader.readAsArrayBuffer(file);
+  }catch(err){
+    toast('Error: '+err.message,'err');ldr(0);
+  }
 }
 function saveConfig(){
   CFG.gap=+document.getElementById('cfgGap').value||15;
