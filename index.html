@@ -1671,6 +1671,7 @@ function processCtlRows(rows,fname){
   // Parsear y agrupar por fecha base + turno + controlador
   var grupos={}; // {dk: {TM:{user:{items,first,last}}, TT:{}, TN:{}}}
   rows.forEach(function(r){
+    try{
     var fechaVal=r['FECHA HORA']||r['Fecha Hora']||r['fecha hora']||'';
     if(!fechaVal&&fechaVal!==0)return;
     var dt=parseCtlFecha(fechaVal);
@@ -1705,6 +1706,7 @@ function processCtlRows(rows,fname){
       if(dt>grupos[dk][turno][ctlKey].last)grupos[dk][turno][ctlKey].last=dt;
     }
     grupos[dk][turno][ctlKey].cia=cia; // última CIA del usuario
+    }catch(e){} // ignorar filas inválidas
   });
 
   // Convertir a array y calcular métricas
