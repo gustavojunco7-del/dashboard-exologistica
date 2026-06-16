@@ -258,6 +258,7 @@ function setSy(on,st){
 // ══ STATE ════════════════════════════════════════════════════════════════════
 var MOD='pick',PAGE='resumen',SEL=null,DEL=null,CUR=curMK(),CFG=lCfg();
 var DB={pick:{},cam:{},hk:{},cal:{}};
+var SKU_BU={}; // SKU -> BU lookup
 var APP_PASS='nike2025';
 var HK_ZONES=['Pasillo 700','Pasillo 800','Mezzanine N1','Mezzanine N2','Mezzanine N3'];
 var BKSL={TM:[{h:9,m:0,d:30},{h:12,m:0,d:60}],TT:[{h:18,m:0,d:30},{h:20,m:0,d:60}],TN:[{h:2,m:0,d:30},{h:4,m:0,d:60}]};
@@ -334,11 +335,13 @@ function analyzePickDay(raw,dk){
     var fk=ks.find(function(k){return /^inicio$/i.test(k);})||ks.find(function(k){return /fecha|date/i.test(k);});
     var uk=ks.find(function(k){return /usuario|user/i.test(k);});
     var qk=ks.find(function(k){return /cantidad|qty|items/i.test(k);});
+    var skk=ks.find(function(k){return /^sku$/i.test(k)||/^SKU$/i.test(k);});
     if(!fk||!uk)continue;
     var dt=parseFecha(r[fk]);if(!dt)continue;
     var u=String(r[uk]||'').trim();if(!u)continue;
     var q=parseFloat(String(r[qk]||'0').replace(',','.'))||0;
-    if(dt>=wS&&dt<wE)rows.push({dt:dt,user:u,qty:q});
+    var sku=skk?String(r[skk]||'').trim():'';
+    if(dt>=wS&&dt<wE)rows.push({dt:dt,user:u,qty:q,sku:sku});
   }
   function shOf(dt){var h=dt.getHours();if(h>=6&&h<14)return'TM';if(h>=14&&h<22)return'TT';return'TN';}
   var shifts={TM:[],TT:[],TN:[]};
@@ -353,6 +356,19 @@ function analyzePickDay(raw,dk){
       var picks=byU[user].sort(function(a,b){return a.dt-b.dt;});
       var times=picks.map(function(p){return p.dt;}),n=times.length;
       var units=picks.reduce(function(s,p){return s+p.qty;},0);
+      // CIA breakdown
+      var ciaCounts={FTW:0,APP:0,EQP:0,unknown:0};
+      picks.forEach(function(p){
+        var bu=p.sku?SKU_BU[p.sku]:null;
+        if(bu==='FTW')ciaCounts.FTW++;
+        else if(bu==='APP')ciaCounts.APP++;
+        else if(bu==='EQP')ciaCounts.EQP++;
+        else ciaCounts.unknown++;
+      });
+      // CIA dominante
+      var topCia='—';
+      var maxC=0;
+      ['FTW','APP','EQP'].forEach(function(c){if(ciaCounts[c]>maxC){maxC=ciaCounts[c];topCia=c;}});
       var preGap=Math.round(Math.max(0,(times[0]-sd)/60000-brkOverlap(sh,sd,times[0],[yr,mo,dy])));
       var inter=0;
       for(var i=0;i<n-1;i++){
@@ -364,7 +380,7 @@ function analyzePickDay(raw,dk){
       var elap=Math.max(0,Math.round((times[n-1]-sd)/60000));
       var prod=Math.max(0,elap-dead),iph=prod>0?Math.round(n/(prod/60)*10)/10:0;
       var elapsedMin=n>1?Math.round((times[n-1]-times[0])/60000):0;
-      users.push({user:user,items:n,units:Math.round(units),first:fmtT(times[0]),last:fmtT(times[n-1]),preGap:preGap,inter:inter,dead:dead,allowed:BRK(),exc:exc,prod:prod,iph:iph,elapsedMin:elapsedMin});
+      users.push({user:user,items:n,units:Math.round(units),first:fmtT(times[0]),last:fmtT(times[n-1]),preGap:preGap,inter:inter,dead:dead,allowed:BRK(),exc:exc,prod:prod,iph:iph,elapsedMin:elapsedMin,cia:topCia,ciaCounts:ciaCounts});
     });
     users.sort(function(a,b){return b.exc-a.exc;});
     result[sh]=users;
@@ -1066,14 +1082,15 @@ function renderPickDayDetail(dk){
     var u=day[s.k]||[];if(!u.length)return;
     var rows=u.map(function(r){
       var pd=r.prod+r.dead>0?r.dead/(r.prod+r.dead)*100:0;
-      return '<tr><td class="tl">'+r.user+'</td><td>'+r.items+'</td><td>'+r.units+'</td>'+
+      var ciaCell=r.cia&&r.cia!=='—'?'<span style="font-size:10px;font-weight:700;padding:2px 6px;border-radius:4px;background:'+(r.cia==='FTW'?'#FF6B0025':r.cia==='APP'?'#3b82f625':'#a78bfa25')+';color:'+(r.cia==='FTW'?'var(--nike)':r.cia==='APP'?'#3b82f6':'#a78bfa')+'">'+r.cia+'</span>':'<span style="color:var(--muted2);font-size:11px">—</span>';
+      return '<tr><td class="tl">'+r.user+'</td><td>'+ciaCell+'</td><td>'+r.items+'</td><td>'+r.units+'</td>'+
         '<td>'+r.first+'</td><td>'+r.last+'</td><td>'+r.preGap+' min</td><td>'+r.inter+' min</td>'+
         '<td><strong>'+r.dead+' min</strong></td><td>'+xBdg(r.exc)+'</td><td>'+r.prod+' min</td>'+
         '<td><strong>'+r.iph+'</strong></td><td>'+barEl(pd)+'</td></tr>';
     }).join('');
     var avgIph=u.length>0?Math.round(u.reduce(function(s,r){return s+r.iph;},0)/u.length*10)/10:0;
     html+=mkTable(s.l+' · '+u.length+' pickers · <span style="color:var(--green);font-weight:800">'+avgIph+' líneas/h</span>',
-      '<tr><th>Usuario</th><th>Items</th><th>Unid.</th><th>1er</th><th>Últ.</th><th>Gap Inicio</th><th>Breaks</th><th>T.Muerto</th><th>Excedente</th><th>T.Productivo</th><th>Items/h</th><th>%</th></tr>',rows);
+      '<tr><th>Usuario</th><th>CIA</th><th>Items</th><th>Unid.</th><th>1er</th><th>Últ.</th><th>Gap Inicio</th><th>Breaks</th><th>T.Muerto</th><th>Excedente</th><th>T.Productivo</th><th>Items/h</th><th>%</th></tr>',rows);
   });
   document.getElementById('main').innerHTML=html;
 }
@@ -1731,6 +1748,27 @@ async function sbUpsertCtl(nm, monthData){
   }catch(e){setSy(0,'er');return false;}
 }
 
+async function loadSkuBu(){
+  try{
+    var page=0, limit=1000, done=false;
+    while(!done){
+      var r=await fetch(SB_URL+'/rest/v1/sku_bu?select=sku,bu&limit='+limit+'&offset='+(page*limit),{headers:SBH});
+      if(!r.ok)break;
+      var rows=await r.json();
+      rows.forEach(function(row){SKU_BU[row.sku]=row.bu;});
+      if(rows.length<limit)done=true;
+      page++;
+    }
+    console.log('SKU_BU loaded:', Object.keys(SKU_BU).length);
+  }catch(e){console.log('SKU_BU load error:',e);}
+}
+
+async function skuToBu(sku){
+  if(!sku)return null;
+  var s=String(sku).trim();
+  return SKU_BU[s]||null;
+}
+
 async function sbLoadCtl(){
   setSy(1);
   try{
@@ -2219,6 +2257,7 @@ async function init(){
     sbGetOut(CUR).then(function(o){if(o){window.CAM_OUT=o;try{localStorage.setItem('cam_out_'+CUR,o);}catch(e){};}});
     await sbLoadCtl();
     await reproLoad();
+    loadSkuBu(); // cargar lookup SKU->BU en background
     updNav();render();
   }catch(e){
     document.getElementById('main').innerHTML='<div class="no-data">❌ Error conectando. Verificá tu conexión.</div>';
