@@ -1750,7 +1750,7 @@ async function sbUpsertCtl(nm, monthData){
 
 async function loadSkuBu(){
   try{
-    var page=0, limit=1000, done=false;
+    var page=0, limit=5000, done=false;
     while(!done){
       var r=await fetch(SB_URL+'/rest/v1/sku_bu?select=sku,bu&limit='+limit+'&offset='+(page*limit),{headers:SBH});
       if(!r.ok)break;
@@ -1759,8 +1759,7 @@ async function loadSkuBu(){
       if(rows.length<limit)done=true;
       page++;
     }
-    console.log('SKU_BU loaded:', Object.keys(SKU_BU).length);
-  }catch(e){console.log('SKU_BU load error:',e);}
+  }catch(e){}
 }
 
 async function skuToBu(sku){
@@ -2257,7 +2256,7 @@ async function init(){
     sbGetOut(CUR).then(function(o){if(o){window.CAM_OUT=o;try{localStorage.setItem('cam_out_'+CUR,o);}catch(e){};}});
     await sbLoadCtl();
     await reproLoad();
-    loadSkuBu(); // cargar lookup SKU->BU en background
+    await loadSkuBu(); // esperar lookup completo antes de renderizar
     updNav();render();
   }catch(e){
     document.getElementById('main').innerHTML='<div class="no-data">❌ Error conectando. Verificá tu conexión.</div>';
