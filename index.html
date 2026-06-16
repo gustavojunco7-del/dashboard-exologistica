@@ -1833,7 +1833,7 @@ function processCtlRows(rows,fname){
           var mk=u.user+'|'+u.cia;
           if(map[mk]){
             // Sumar items, tomar primer/último según turno
-            var ex=map[u.user];
+            var ex=map[mk];
             var newItems=ex.items+u.items;
             var newFirst=ex.first, newLast=ex.last;
             if(sh==='TN'){
@@ -1860,7 +1860,7 @@ function processCtlRows(rows,fname){
   Object.keys(grupos).forEach(function(dk){
     var nm=dk.slice(0,7);
     if(!meses[nm])meses[nm]={};
-    meses[nm][dk]=DB_CTL[dk];
+    meses[nm][dk]=DB_CTL[dk]||{}; // usar lo que está en DB_CTL, fallback a objeto vacío
   });
   var saves=Object.keys(meses).map(function(nm){
     return sbUpsertCtl(nm,meses[nm]);
