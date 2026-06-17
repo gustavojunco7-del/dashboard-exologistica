@@ -344,7 +344,7 @@ function analyzePickDay(raw,dk){
     var dt=parseFecha(r[fk]);if(!dt)continue;
     var u=String(r[uk]||'').trim();if(!u)continue;
     var q=parseFloat(String(r[qk]||'0').replace(',','.'))||0;
-    var sku=skk?String(r[skk]||'').trim().replace(/\.0$/,''):'';
+    var sku=skk?String(r[skk]||'').trim().replace(/\.0$/,'').slice(0,10):'';
     if(dt>=wS&&dt<wE)rows.push({dt:dt,user:u,qty:q,sku:sku});
   }
   function shOf(dt){var h=dt.getHours();if(h>=6&&h<14)return'TM';if(h>=14&&h<22)return'TT';return'TN';}
@@ -363,7 +363,7 @@ function analyzePickDay(raw,dk){
       // CIA breakdown
       var ciaCounts={FTW:0,APP:0,EQP:0,unknown:0};
       picks.forEach(function(p){
-        var bu=p.sku?SKU_BU[p.sku]:null;
+        var bu=p.sku?SKU_BU[p.sku.slice(0,10)]:null;
         if(bu==='FTW')ciaCounts.FTW++;
         else if(bu==='APP')ciaCounts.APP++;
         else if(bu==='EQP')ciaCounts.EQP++;
@@ -1691,10 +1691,10 @@ async function loadSkuBu(){
     try{
       var page=0,limit=5000,done=false;
       while(!done){
-        var r=await fetch(SB_URL+'/rest/v1/sku_bu?select=sku,bu&limit='+limit+'&offset='+(page*limit),{headers:SBH});
+        var r=await fetch(SB_URL+'/rest/v1/sku_bu_base?select=sku_base,bu&limit='+limit+'&offset='+(page*limit),{headers:SBH});
         if(!r.ok)break;
         var rows=await r.json();
-        rows.forEach(function(row){SKU_BU[row.sku]=row.bu;});
+        rows.forEach(function(row){SKU_BU[row.sku_base]=row.bu;});
         if(rows.length<limit)done=true;
         page++;
       }
