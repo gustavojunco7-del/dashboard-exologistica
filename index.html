@@ -647,54 +647,7 @@ async function loadPickDate(raw,dk){
     var result=analyzePickDay(raw,dk);
     var total=['TM','TT','TN'].reduce(function(a,s){return a+(result[s]||[]).length;},0);
     if(!total){toast('Sin registros para esa fecha','err');ldr(0);return;}
-    if(DB.pick[dk]){
-      ['TM','TT','TN'].forEach(function(sh){
-        var existing=DB.pick[dk][sh]||[];
-        var incoming=result[sh]||[];
-        // Si el turno nuevo tiene MÁS usuarios que el existente, usar el nuevo
-        // Si el existente tiene MÁS, mantener el existente
-        // Para TN: siempre mergear sumando (puede venir en dos partes)
-        if(sh==='TN'){
-          var exU={};
-          existing.forEach(function(u){exU[u.user]=u;});
-          incoming.forEach(function(u){
-            if(exU[u.user]){
-              var ex=exU[u.user];
-              // Para TN: convertir HH:MM a minutos desde las 22:00 para comparar correctamente
-              function tnMin(hhmm){
-                if(!hhmm)return null;
-                var p=hhmm.split(':');var h=+p[0],m=+p[1];
-                // 22:00=0, 23:59=119, 00:00=120, 05:59=479
-                return h>=22?(h-22)*60+m:(h+2)*60+m+120;
-              }
-              var exF=tnMin(ex.first),exL=tnMin(ex.last);
-              var uF=tnMin(u.first),uL=tnMin(u.last);
-              var newFirst=exF!==null&&uF!==null?(exF<uF?ex.first:u.first):ex.first||u.first;
-              var newLast=exL!==null&&uL!==null?(exL>uL?ex.last:u.last):ex.last||u.last;
-              var newFirstMin=exF!==null&&uF!==null?Math.min(exF,uF):exF||uF||0;
-              var newLastMin=exL!==null&&uL!==null?Math.max(exL,uL):exL||uL||0;
-              var mins=Math.max(0,newLastMin-newFirstMin);
-              var newItems=ex.items+u.items;
-              var newUnits=(ex.units||0)+(u.units||0);
-              var newElapsed=mins;
-              var newProd=Math.max(0,mins-ex.dead); // aproximado
-              var newIph=mins>0?Math.round(newItems/(mins/60)*10)/10:newItems;
-              exU[u.user]=Object.assign({},ex,{
-                items:newItems, units:newUnits,
-                first:newFirst, last:newLast,
-                elapsedMin:newElapsed, iph:newIph
-              });
-            } else {
-              exU[u.user]=u;
-            }
-          });
-          result[sh]=Object.values(exU).sort(function(a,b){return b.exc-a.exc;});
-        } else {
-          // TM y TT: usar el que tenga más registros
-          result[sh]=incoming.length>=existing.length?incoming:existing;
-        }
-      });
-    }
+    // Pisar siempre el día completo — no acumular
     ldr(1,'Guardando...');
     var ok=await sbUpsert('pick',dk,result);if(!ok){ldr(0);return;}
     DB.pick[dk]=result;window._raw=null;
@@ -1827,39 +1780,7 @@ function processCtlRows(rows,fname){
       // Ordenar por items desc
       dayData[sh].sort(function(a,b){return b.items-a.items;});
     });
-    // Fusionar con datos existentes si los hay
-    if(DB_CTL[dk]){
-      ['TM','TT','TN'].forEach(function(sh){
-        var existing=DB_CTL[dk][sh]||[];
-        var incoming=dayData[sh];
-        if(!incoming.length){dayData[sh]=existing;return;}
-        if(!existing.length)return;
-        // Para todos los turnos: usar el que tenga más usuarios, completando con el otro
-        var map={};
-        existing.forEach(function(u){map[u.user+'|'+u.cia]=Object.assign({},u);});
-        incoming.forEach(function(u){
-          var mk=u.user+'|'+u.cia;
-          if(map[mk]){
-            // Sumar items, tomar primer/último según turno
-            var ex=map[mk];
-            var newItems=ex.items+u.items;
-            var newFirst=ex.first, newLast=ex.last;
-            if(sh==='TN'){
-              function tnMinStr(s){if(!s)return 0;var p=s.split(':');var h=+p[0],m=+p[1];return h>=22?(h-22)*60+m:(h+2)*60+m+120;}
-              if(tnMinStr(u.first)<tnMinStr(ex.first))newFirst=u.first;
-              if(tnMinStr(u.last)>tnMinStr(ex.last))newLast=u.last;
-            } else {
-              if(u.first<ex.first)newFirst=u.first;
-              if(u.last>ex.last)newLast=u.last;
-            }
-            map[mk]=Object.assign({},ex,{items:newItems,unidades:(ex.unidades||0)+(u.unidades||0),first:newFirst,last:newLast,pct:Math.min(100,Math.round(newItems/(CTL_TARGET[ex.cia]||200)*100))});
-          } else {
-            map[mk]=u;
-          }
-        });
-        dayData[sh]=Object.values(map).sort(function(a,b){return b.items-a.items;});
-      });
-    }
+    // Pisar siempre el día completo — no acumular
     DB_CTL[dk]=dayData;
   });
 
