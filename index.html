@@ -259,7 +259,10 @@ function setSy(on,st){
 var MOD='pick',PAGE='resumen',SEL=null,DEL=null,CUR=curMK(),CFG=lCfg();
 var DB={pick:{},cam:{},hk:{},cal:{}};
 var SKU_BU={};
+var SKU_BU_PROMISE=null;
 var DB_CTL={};
+var CTL_DIVISOR={FTW:6,EQP:12,APP:18};
+var CTL_TARGET={FTW:200,EQP:200,APP:40};
 var APP_PASS='nike2025';
 var HK_ZONES=['Pasillo 700','Pasillo 800','Mezzanine N1','Mezzanine N2','Mezzanine N3'];
 var BKSL={TM:[{h:9,m:0,d:30},{h:12,m:0,d:60}],TT:[{h:18,m:0,d:30},{h:20,m:0,d:60}],TN:[{h:2,m:0,d:30},{h:4,m:0,d:60}]};
@@ -640,6 +643,7 @@ function readPickFile(f){
 async function loadPickDate(raw,dk){
   ldr(1,'Analizando...');
   try{
+    if(SKU_BU_PROMISE)await SKU_BU_PROMISE; // esperar lookup si está cargando
     var result=analyzePickDay(raw,dk);
     var total=['TM','TT','TN'].reduce(function(a,s){return a+(result[s]||[]).length;},0);
     if(!total){toast('Sin registros para esa fecha','err');ldr(0);return;}
@@ -1708,27 +1712,24 @@ async function sbUpsertCtl(nm, monthData){
 }
 
 async function loadSkuBu(){
-  // Carga lazy — no precargamos todo, se carga por demanda al procesar Excel
-  SKU_BU={};
+  SKU_BU_PROMISE=(async function(){
+    try{
+      var page=0,limit=5000,done=false;
+      while(!done){
+        var r=await fetch(SB_URL+'/rest/v1/sku_bu?select=sku,bu&limit='+limit+'&offset='+(page*limit),{headers:SBH});
+        if(!r.ok)break;
+        var rows=await r.json();
+        rows.forEach(function(row){SKU_BU[row.sku]=row.bu;});
+        if(rows.length<limit)done=true;
+        page++;
+      }
+    }catch(e){}
+  })();
 }
 
 async function enrichSkuBu(skus){
-  // Traer BUs solo para los SKUs del Excel actual
-  if(!skus||!skus.length)return;
-  var unique=[...new Set(skus)].filter(function(s){return s&&!SKU_BU[s];});
-  if(!unique.length)return;
-  // Supabase tiene límite de URL, dividir en lotes de 200
-  var BATCH=200;
-  for(var i=0;i<unique.length;i+=BATCH){
-    var chunk=unique.slice(i,i+BATCH);
-    try{
-      var filter='sku=in.('+chunk.join(',')+')';
-      var r=await fetch(SB_URL+'/rest/v1/sku_bu?select=sku,bu&'+filter,{headers:SBH});
-      if(!r.ok)continue;
-      var rows=await r.json();
-      rows.forEach(function(row){SKU_BU[row.sku]=row.bu;});
-    }catch(e){}
-  }
+  // Esperar que el lookup esté listo
+  if(SKU_BU_PROMISE)await SKU_BU_PROMISE;
 }
 
 async function skuToBu(sku){
@@ -2225,6 +2226,7 @@ async function init(){
     sbGetOut(CUR).then(function(o){if(o){window.CAM_OUT=o;try{localStorage.setItem('cam_out_'+CUR,o);}catch(e){};}});
     try{await sbLoadCtl();}catch(e){console.log('sbLoadCtl error:',e);}
     try{await reproLoad();}catch(e){console.log('reproLoad error:',e);}
+    loadSkuBu(); // arrancar en background sin bloquear
     updNav();render();
   }catch(e){
     console.log('Init error:',e);
