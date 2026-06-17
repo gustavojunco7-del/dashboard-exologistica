@@ -1774,7 +1774,7 @@ function processCtlRows(rows,fname){
           last:fmtH(u.last),
           gap:gap,
           iph:iph,
-          pct:Math.min(100,Math.round(u.items/target*100))
+          pct:Math.min(100,Math.round(itemsCount/target*100))
         });
       });
       // Ordenar por items desc
