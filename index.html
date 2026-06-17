@@ -344,7 +344,7 @@ function analyzePickDay(raw,dk){
     var dt=parseFecha(r[fk]);if(!dt)continue;
     var u=String(r[uk]||'').trim();if(!u)continue;
     var q=parseFloat(String(r[qk]||'0').replace(',','.'))||0;
-    var sku=skk?String(r[skk]||'').trim():'';
+    var sku=skk?String(r[skk]||'').trim().replace(/\.0$/,''):'';
     if(dt>=wS&&dt<wE)rows.push({dt:dt,user:u,qty:q,sku:sku});
   }
   function shOf(dt){var h=dt.getHours();if(h>=6&&h<14)return'TM';if(h>=14&&h<22)return'TT';return'TN';}
@@ -773,7 +773,8 @@ function parseHKExcel(text){
 // ══ RENDER ROUTER ════════════════════════════════════════════════════════════
 function render(){
   updateSB();
-  document.getElementById('btnExport').style.display=(MOD!=='ing'&&MOD!=='ctl'&&Object.keys(DB[MOD]||{}).length)?'inline-block':'none';
+  var ctlHasData=MOD==='ctl'&&Object.keys(DB_CTL||{}).length>0;
+  document.getElementById('btnExport').style.display=(ctlHasData||(MOD!=='ing'&&MOD!=='ctl'&&Object.keys(DB[MOD]||{}).length))?'inline-block':'none';
   if(PAGE==='config'){renderConfig();return;}
   if(MOD==='ing'){
     if(PAGE==='ing-dias')renderIngresosDias();
@@ -1435,6 +1436,27 @@ function viewDay(dk){SEL=dk;PAGE='dias';updNav();render();}
 
 function exportExcel(){
   if(MOD==='ing'){toast('No disponible para Ingresos','err');return;}
+  if(MOD==='ctl'){
+    var days=Object.keys(DB_CTL).sort();if(!days.length){toast('Sin datos','err');return;}
+    ldr(1,'Generando Excel...');
+    setTimeout(function(){
+      var wb=XLSX.utils.book_new();
+      var rows=[['Fecha','Turno','Operario','CIA','Unidades','Bultos','1er Reg.','Último','B/hora','% Target']];
+      days.forEach(function(dk){
+        var fp=dk.split('-'),dlbl=(+fp[2])+'/'+fp[1];
+        ['TM','TT','TN'].forEach(function(sh){
+          (DB_CTL[dk][sh]||[]).forEach(function(u){
+            rows.push([dlbl,sh,u.user,u.cia,u.unidades||0,u.items,u.first,u.last,u.iph,u.pct+'%']);
+          });
+        });
+      });
+      var fp2=CUR.split('-');
+      XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(rows),'Mesa Control');
+      XLSX.writeFile(wb,'mesa_control_'+fp2[1]+'-'+fp2[0]+'.xlsx');
+      ldr(0);toast('Excel exportado');
+    },50);
+    return;
+  }
   var days=Object.keys(DB[MOD]).sort();if(!days.length){toast('Sin datos','err');return;}
   ldr(1,'Generando Excel...');
   setTimeout(function(){
