@@ -1774,10 +1774,10 @@ function processCtlRows(rows,fname){
 
     if(!grupos[dk])grupos[dk]={TM:{},TT:{},TN:{}};
     if(!grupos[dk][turno])return; // turno inválido
+    var bulto=String(r['BULTO']||r['Bulto']||'').trim();
     var ctlKey=ctrl+'|'+cia;
-    if(!grupos[dk][turno][ctlKey])grupos[dk][turno][ctlKey]={items:0,unidadesRaw:0,first:dt,last:dt,cia:cia,user:ctrl};
-    var divisor=CTL_DIVISOR[cia]||6;
-    grupos[dk][turno][ctlKey].items+=cant/divisor;
+    if(!grupos[dk][turno][ctlKey])grupos[dk][turno][ctlKey]={bultos:new Set(),unidadesRaw:0,first:dt,last:dt,cia:cia,user:ctrl};
+    if(bulto)grupos[dk][turno][ctlKey].bultos.add(bulto);
     grupos[dk][turno][ctlKey].unidadesRaw+=cant;
     if(turno==='TN'){
       var curFirst=grupos[dk][turno][ctlKey].first;
@@ -1800,10 +1800,11 @@ function processCtlRows(rows,fname){
       Object.keys(shData).forEach(function(ctrl){
         var u=shData[ctrl];
         if(!(u.first instanceof Date)||!(u.last instanceof Date))return;
+        var itemsCount=u.bultos instanceof Set?u.bultos.size:(u.items||0);
         var target=CTL_TARGET[u.cia]||200;
         var mins=(u.last-u.first)/60000;
         var hs=mins/60;
-        var iph=hs>0?Math.round(u.items/hs):Math.round(u.items);
+        var iph=hs>0?Math.round(itemsCount/hs):Math.round(itemsCount);
         // Gap inicio: minutos desde inicio del turno hasta primer registro
         var turnoStart={TM:6,TT:14,TN:22}[sh];
         var startDt=new Date(u.first);
@@ -1812,7 +1813,7 @@ function processCtlRows(rows,fname){
         var fmtH=function(d){return('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2);};
         dayData[sh].push({
           user:u.user,
-          items:Math.round(u.items),
+          items:u.bultos instanceof Set?u.bultos.size:Math.round(u.items||0),
           unidades:Math.round(u.unidadesRaw||0),
           cia:u.cia,
           target:target,
