@@ -1694,14 +1694,17 @@ async function loadSkuBu(){
     try{
       var page=0,limit=5000,done=false;
       while(!done){
-        var r=await fetch(SB_URL+'/rest/v1/sku_bu_base?select=sku_base,bu&limit='+limit+'&offset='+(page*limit),{headers:SBH});
+        var from=page*limit, to=from+limit-1;
+        var h=Object.assign({},SBH,{'Range':from+'-'+to,'Range-Unit':'items','Prefer':'count=none'});
+        var r=await fetch(SB_URL+'/rest/v1/sku_bu_base?select=sku_base,bu&limit='+limit+'&offset='+from,{headers:h});
         if(!r.ok)break;
         var rows=await r.json();
         rows.forEach(function(row){SKU_BU[row.sku_base]=row.bu;});
         if(rows.length<limit)done=true;
         page++;
       }
-    }catch(e){}
+      console.log('SKU_BU cargado:',Object.keys(SKU_BU).length,'registros');
+    }catch(e){console.error('loadSkuBu error:',e);}
   })();
 }
 
