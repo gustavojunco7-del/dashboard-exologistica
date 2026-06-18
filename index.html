@@ -264,6 +264,7 @@ var DB_CTL={};
 var CTL_DIVISOR={FTW:6,EQP:12,APP:18};
 var CTL_TARGET={FTW:200,EQP:200,APP:40};
 var APP_PASS='nike2025';
+var PICK_BLACKLIST=['cdacal','evtcbaez','juescalante','lmministroni','lponce','ministroni leonardo marcelo','rchavez'];
 var HK_ZONES=['Pasillo 700','Pasillo 800','Mezzanine N1','Mezzanine N2','Mezzanine N3'];
 var BKSL={TM:[{h:9,m:0,d:30},{h:12,m:0,d:60}],TT:[{h:18,m:0,d:30},{h:20,m:0,d:60}],TN:[{h:2,m:0,d:30},{h:4,m:0,d:60}]};
 
@@ -343,6 +344,7 @@ function analyzePickDay(raw,dk){
     if(!fk||!uk)continue;
     var dt=parseFecha(r[fk]);if(!dt)continue;
     var u=String(r[uk]||'').trim();if(!u)continue;
+    if(PICK_BLACKLIST.indexOf(u.toLowerCase())>=0)continue;
     var q=parseFloat(String(r[qk]||'0').replace(',','.'))||0;
     var sku=skk?String(r[skk]||'').trim().replace(/\.0$/,'').slice(0,10):'';
     if(dt>=wS&&dt<wE)rows.push({dt:dt,user:u,qty:q,sku:sku});
@@ -503,6 +505,7 @@ async function processPickBI(rows,fname){
   valid.forEach(function(r){
     var turno=String(r['Turno']||r['TURNO']||'').trim();
     var colab=String(r['Colaborador']||r['COLABORADOR']||'').trim();
+    if(PICK_BLACKLIST.indexOf(colab.toLowerCase())>=0)return;
     var cia=String(r['Cía']||r['CIA']||r['Cia']||'').trim();
     var lineas=parseFloat(String(r['Líneas']||r['Lineas']||r['LINEAS']||'0'))||0;
     var fMin=parseExcelSerial(r['Fecha Minima']||r['FECHA MINIMA']||r['fecha minima']);
