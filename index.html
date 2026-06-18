@@ -646,7 +646,12 @@ function readPickFile(f){
 async function loadPickDate(raw,dk){
   ldr(1,'Analizando...');
   try{
-    if(SKU_BU_PROMISE)await SKU_BU_PROMISE; // esperar lookup si está cargando
+    // Siempre esperar que el maestro esté completo antes de procesar
+    if(SKU_BU_PROMISE){
+      ldr(1,'Cargando maestro de artículos...');
+      await SKU_BU_PROMISE;
+    }
+    ldr(1,'Analizando...');
     var result=analyzePickDay(raw,dk);
     var total=['TM','TT','TN'].reduce(function(a,s){return a+(result[s]||[]).length;},0);
     if(!total){toast('Sin registros para esa fecha','err');ldr(0);return;}
@@ -2176,7 +2181,18 @@ async function init(){
     sbGetOut(CUR).then(function(o){if(o){window.CAM_OUT=o;try{localStorage.setItem('cam_out_'+CUR,o);}catch(e){};}});
     try{await sbLoadCtl();}catch(e){console.log('sbLoadCtl error:',e);}
     try{await reproLoad();}catch(e){console.log('reproLoad error:',e);}
-    loadSkuBu(); // arrancar en background sin bloquear
+    loadSkuBu();
+    // Deshabilitar botón hasta que maestro esté completo
+    document.getElementById('btnLoad').disabled=true;
+    document.getElementById('btnLoad').textContent='⏳ Cargando...';
+    SKU_BU_PROMISE.then(function(){
+      document.getElementById('btnLoad').disabled=false;
+      var labels={pick:'+ Cargar día',cam:'+ Cargar',hk:'+ Cargar auditoría',ing:'+ Cargar Excel',ctl:'+ Cargar Excel'};
+      document.getElementById('btnLoad').textContent=labels[MOD]||'+ Cargar';
+    }).catch(function(){
+      document.getElementById('btnLoad').disabled=false;
+      document.getElementById('btnLoad').textContent='+ Cargar';
+    });
     updNav();render();
   }catch(e){
     console.log('Init error:',e);
