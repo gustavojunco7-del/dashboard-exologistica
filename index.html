@@ -1683,8 +1683,21 @@ async function sbUpsertCtl(nm, monthData){
     var rows=await existing.json();
     var merged=monthData;
     if(rows.length&&rows[0].data){
-      // Merge: datos de Supabase + datos nuevos (nuevos pisan por día)
-      merged=Object.assign({},rows[0].data,monthData);
+      // Merge profundo por turno: no pisar turnos ya guardados si el nuevo no trae datos de ese turno
+      var existing=rows[0].data;
+      merged=Object.assign({},existing);
+      Object.keys(monthData).forEach(function(dk){
+        if(!merged[dk]){
+          merged[dk]=monthData[dk];
+        } else {
+          merged[dk]=Object.assign({},merged[dk]);
+          ['TM','TT','TN'].forEach(function(sh){
+            if(monthData[dk][sh]&&monthData[dk][sh].length>0){
+              merged[dk][sh]=monthData[dk][sh];
+            }
+          });
+        }
+      });
     }
     var method=rows.length?'PATCH':'POST';
     var url=SB_URL+'/rest/v1/control_data'+(method==='PATCH'?'?id=eq.'+nm:'');
