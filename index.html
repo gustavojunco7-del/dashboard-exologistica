@@ -365,7 +365,7 @@ function analyzePickDay(raw,dk){
       // CIA breakdown
       var ciaCounts={FTW:0,APP:0,EQP:0,unknown:0};
       picks.forEach(function(p){
-        var bu=p.sku?SKU_BU[p.sku.slice(0,10)]:null;
+        var bu=p.sku?SKU_BU[p.sku.slice(7,15)]:null;
         if(bu==='FTW')ciaCounts.FTW++;
         else if(bu==='APP')ciaCounts.APP++;
         else if(bu==='EQP')ciaCounts.EQP++;
