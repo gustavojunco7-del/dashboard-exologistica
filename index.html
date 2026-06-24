@@ -1683,21 +1683,9 @@ async function sbUpsertCtl(nm, monthData){
     var rows=await existing.json();
     var merged=monthData;
     if(rows.length&&rows[0].data){
-      // Merge profundo por turno: no pisar turnos ya guardados si el nuevo no trae datos de ese turno
-      var existing=rows[0].data;
-      merged=Object.assign({},existing);
-      Object.keys(monthData).forEach(function(dk){
-        if(!merged[dk]){
-          merged[dk]=monthData[dk];
-        } else {
-          merged[dk]=Object.assign({},merged[dk]);
-          ['TM','TT','TN'].forEach(function(sh){
-            if(monthData[dk][sh]&&monthData[dk][sh].length>0){
-              merged[dk][sh]=monthData[dk][sh];
-            }
-          });
-        }
-      });
+      // Merge: Supabase como base, monthData pisa los días que vienen en el nuevo Excel
+      // Los días que NO vienen en monthData se conservan de Supabase
+      merged=Object.assign({},rows[0].data,monthData);
     }
     var method=rows.length?'PATCH':'POST';
     var url=SB_URL+'/rest/v1/control_data'+(method==='PATCH'?'?id=eq.'+nm:'');
@@ -1830,12 +1818,12 @@ function processCtlRows(rows,fname){
     DB_CTL[dk]=dayData;
   });
 
-  // Guardar en Supabase por mes — solo los días nuevos, sbUpsertCtl mergea con Supabase
+  // Guardar en Supabase por mes — usar dayData procesado, no DB_CTL (que puede tener datos viejos)
   var meses={};
   Object.keys(grupos).forEach(function(dk){
     var nm=dk.slice(0,7);
     if(!meses[nm])meses[nm]={};
-    meses[nm][dk]=DB_CTL[dk]||{}; // usar lo que está en DB_CTL, fallback a objeto vacío
+    meses[nm][dk]=DB_CTL[dk]; // DB_CTL[dk] ya fue actualizado con dayData arriba
   });
   var saves=Object.keys(meses).map(function(nm){
     return sbUpsertCtl(nm,meses[nm]);
