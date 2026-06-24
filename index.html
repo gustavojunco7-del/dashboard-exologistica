@@ -880,11 +880,11 @@ async function loadMaestro(file){
       var batch=[];
       var seen=new Set();
       rows.forEach(function(r){
-        var sku=String(r['Variante']||'').trim();
+        var sku=String(r['Generico']||r['Genérico']||'').trim();
         var bu=String(r['BU']||'').trim();
         if(!sku||!bu||seen.has(sku))return;
         seen.add(sku);
-        batch.push({sku:sku,bu:bu});
+        batch.push({sku_base:sku,bu:bu});
       });
       toast('Procesando '+batch.length+' SKUs...','ok');
       ldr(1,'Cargando en Supabase (puede tardar unos minutos)...');
@@ -894,7 +894,7 @@ async function loadMaestro(file){
       for(var i=0;i<batch.length;i+=BATCH){
         var chunk=batch.slice(i,i+BATCH);
         try{
-          var r=await fetch(SB_URL+'/rest/v1/sku_bu',{
+          var r=await fetch(SB_URL+'/rest/v1/sku_bu_base',{
             method:'POST',
             headers:Object.assign({},SBH,{'Prefer':'resolution=merge-duplicates,return=minimal'}),
             body:JSON.stringify(chunk)
