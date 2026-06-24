@@ -1604,9 +1604,10 @@ function renderPickTendencias(){
 }
 
 function baseDateCTL(dt){
+  function localDk(d){return d.getFullYear()+'-'+(('0'+(d.getMonth()+1)).slice(-2))+'-'+(('0'+d.getDate()).slice(-2));}
   var h=dt.getHours();
-  if(h<6){var d=new Date(dt);d.setDate(d.getDate()-1);return d.toISOString().slice(0,10);}
-  return dt.toISOString().slice(0,10);
+  if(h<6){var d=new Date(dt);d.setDate(d.getDate()-1);return localDk(d);}
+  return localDk(dt);
 }
 
 function turnoFromCTL(dt){
@@ -1683,8 +1684,7 @@ async function sbUpsertCtl(nm, monthData){
     var rows=await existing.json();
     var merged=monthData;
     if(rows.length&&rows[0].data){
-      // Merge: Supabase como base, monthData pisa los días que vienen en el nuevo Excel
-      // Los días que NO vienen en monthData se conservan de Supabase
+      // Merge: datos de Supabase + datos nuevos (nuevos pisan por día)
       merged=Object.assign({},rows[0].data,monthData);
     }
     var method=rows.length?'PATCH':'POST';
@@ -1818,12 +1818,12 @@ function processCtlRows(rows,fname){
     DB_CTL[dk]=dayData;
   });
 
-  // Guardar en Supabase por mes — usar dayData procesado, no DB_CTL (que puede tener datos viejos)
+  // Guardar en Supabase por mes — solo los días nuevos, sbUpsertCtl mergea con Supabase
   var meses={};
   Object.keys(grupos).forEach(function(dk){
     var nm=dk.slice(0,7);
     if(!meses[nm])meses[nm]={};
-    meses[nm][dk]=DB_CTL[dk]; // DB_CTL[dk] ya fue actualizado con dayData arriba
+    meses[nm][dk]=DB_CTL[dk]||{}; // usar lo que está en DB_CTL, fallback a objeto vacío
   });
   var saves=Object.keys(meses).map(function(nm){
     return sbUpsertCtl(nm,meses[nm]);
