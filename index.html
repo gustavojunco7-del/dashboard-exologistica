@@ -1,4 +1,7 @@
 <!DOCTYPE html>
+<!-- VERSION_DASHBOARD: 2026-08-06-v18 | Fixes previos (v17, sin bump en su momento): shOf-limite-TM/TT-corregido(10->14hs), Blacklist-normalizada-por-espacios(fix Ponce Lis), Meta-Inbound-deteccion-de-bloque-validada(evita falso positivo con seccion resumen), Alias-merge-reducido-a-solo-nikepick01(Stempelato, confirmado con datos reales; nikepick02/31/38 sacados por reasignacion de cuenta generica a distintos operarios) | Nuevo v18 (06/08/2026, confirmado con Gus): GAP-umbral-tiempo-muerto-bajado-de-15-a-2-min, Clasificacion-turno-por-hora-de-salida-no-de-entrada(4 casos de horas extra: TN hasta 10am o desde 18h dia anterior, TM hasta 18h, TT con extras desde 10am) | Pendiente: reprocesar/depurar registros viejos de Ponce Lis ya guardados en Supabase, aplicar umbral de 2min a Mesa de Control cuando se implemente IT/CA en vivo -->
+<!-- shOf() queda sin uso desde el fix de clasificacion por hora de salida (06/08/2026) — no se borra por si se necesita de referencia, pero la clasificacion real vive en turnoFinal dentro de analyzePickDay -->
+
 <html lang="es">
 <head>
 <meta charset="UTF-8"/>
@@ -24,6 +27,7 @@ button{cursor:pointer;font-family:inherit}
 .mod-tab.mhk.active{color:var(--hk);border-bottom-color:var(--hk)}
 .mod-tab.ming.active{color:var(--ing);border-bottom-color:var(--ing)}
 .mod-tab.mctl.active{color:#06b6d4;border-bottom-color:#06b6d4}
+.mod-tab.mtr.active{color:#f43f5e;border-bottom-color:#f43f5e}
 .btn{padding:7px 15px;border-radius:7px;border:none;font-size:12px;font-weight:600;transition:.15s}
 .btn-p{background:var(--nike);color:#fff}.btn-p:hover{background:#e05e00}
 .btn-g{background:#16a34a;color:#fff;font-weight:700}.btn-g:hover{background:#15803d}
@@ -119,6 +123,7 @@ input[type=file]{display:none}
     <button class="btn btn-r btn-sm" onclick="confirmDelete()">Eliminar</button>
   </div>
 </div></div>
+<div class="modal-bg" id="modalGeneric" onclick="if(event.target===this)closeGenericModal()"><div class="modal" style="max-width:600px;max-height:80vh;overflow:auto" id="modalGenericBody"></div></div>
 
 <div class="hdr">
   <div class="hdr-l" style="gap:16px">
@@ -139,6 +144,7 @@ input[type=file]{display:none}
   <div class="mod-tab mhk" id="mtab-hk" onclick="switchModule('hk')">Housekeeping</div>
   <div class="mod-tab ming" id="mtab-ing" onclick="switchModule('ing')">Ingresos</div>
   <div class="mod-tab mctl" id="mtab-ctl" onclick="switchModule('ctl')">Mesa Control</div>
+  <div class="mod-tab mtr" id="mtab-tr" onclick="switchModule('tr')">Transmisiones</div>
 </div>
 
 <div class="layout">
@@ -156,11 +162,13 @@ input[type=file]{display:none}
     <div class="nav-item" id="nav-ctl-resumen" onclick="goPage('ctl-resumen')"><span class="ni">◈</span>Resumen</div>
     <div class="nav-item" id="nav-ctl-dias" onclick="goPage('ctl-dias')"><span class="ni">◈</span>Ver por día</div>
     <div class="nav-item" id="nav-ctl-tendencias" onclick="goPage('ctl-tendencias')"><span class="ni">◈</span>Tendencias</div>
+    <div class="nav-item" id="nav-tr-resumen" onclick="goPage('tr-resumen')"><span class="ni">◈</span>Transmisiones / BO</div>
     <div class="nav-div"></div>
     <div class="sb-sec">Configuración</div>
     <div class="nav-item" id="nav-config" onclick="goPage('config')"><span class="ni">◈</span>Configuración</div>
     <div class="nav-div"></div>
     <div class="sync-s"><div class="sync-d" id="syncDot"></div><span id="syncTxt" style="font-size:10px;color:var(--muted2)">Conectado</span></div>
+    <div id="unclassifiedAlert" style="display:none;margin:8px 14px;padding:10px 12px;background:#fef3c710;border:1px solid #fde68a;border-radius:8px;cursor:pointer" onclick="showUnclassifiedDetail()"></div>
     <div class="sb-sec">Días cargados</div>
     <div id="sidebarDays" style="padding:6px 14px 14px;font-size:11px;color:var(--muted2);line-height:1.9"></div>
   </div>
@@ -260,37 +268,70 @@ var MOD='pick',PAGE='resumen',SEL=null,DEL=null,CUR=curMK(),CFG=lCfg();
 var DB={pick:{},cam:{},hk:{},cal:{}};
 var SKU_BU={};
 var SKU_BU_PROMISE=null;
+var PICKER_NAMES={};
+var PICKER_NAMES_PROMISE=null;
+var UNCLASSIFIED_SKUS={}; // {sku: cantidad de lineas vistas con ese sku sin CIA en el maestro}
 var DB_CTL={};
+var DB_TR={asOf:null,rows:[],meli:{},dropMarco:{FTW:6.7,APP:5.6,EQP:20.2}}; // Transmisiones / Back Order — foto única (se reemplaza entera en cada carga)
 var CTL_DIVISOR={FTW:6,EQP:12,APP:18};
 var CTL_TARGET={FTW:200,EQP:200,APP:40};
 var APP_PASS='nike2025';
-var PICK_BLACKLIST=['cdacal','evtcbaez','juescalante','lmministroni','lponce','ministroni leonardo marcelo','rchavez'];
+var PICK_BLACKLIST=['cdacal','evtcbaez','juescalante','lmministroni','lponce','ministroni leonardo marcelo','rchavez','acollado','poncelis','juansuper'];
+// Normaliza sacando espacios para evitar mismatches tipo "PONCE LIS" (WMS) vs "poncelis" (blacklist)
+var PICK_BLACKLIST_NORM=PICK_BLACKLIST.map(function(x){return x.toLowerCase().replace(/\s+/g,'');});
+function inPickBlacklist(u){return PICK_BLACKLIST_NORM.indexOf(String(u||'').toLowerCase().replace(/\s+/g,''))>=0;}
 var HK_ZONES=['Pasillo 700','Pasillo 800','Mezzanine N1','Mezzanine N2','Mezzanine N3'];
 var BKSL={TM:[{h:9,m:0,d:30},{h:12,m:0,d:60}],TT:[{h:18,m:0,d:30},{h:20,m:0,d:60}],TN:[{h:2,m:0,d:30},{h:4,m:0,d:60}]};
 
 function lCfg(){try{return JSON.parse(localStorage.getItem('ops_cfg')||'{}');}catch(e){return{};}}
 function sCfg(){localStorage.setItem('ops_cfg',JSON.stringify(CFG));}
 function curMK(){var n=new Date();return n.getFullYear()+'-'+pad(n.getMonth()+1);}
-function GAP(){return+(CFG.gap||15);}
+function GAP(){return+(CFG.gap||2);} // Bajado de 15 a 2 min (06/08/2026, confirmado con Gus) — antes se regalaba demasiado tiempo
 function BRK(){return+(CFG.brk||90);}
+function PICK_TARGET(){return+(CFG.pick_target||31);} // líneas/hora, reemplaza el viejo objetivo de 200/turno
+
+// ══ CLASIFICACIÓN EFECTIVOS / EVENTUALES ══
+// Regla: "nikepick" en el usuario = Eventual, salvo excepciones confirmadas que
+// usan un usuario nikepick pero son personal Efectivo.
+// Confirmado 06/08/2026 con Gus: los supervisores reasignan los usuarios nikepickXX
+// a operarios distintos según el día — no hay una persona fija detrás de cada
+// número. Solo nikepick01 (Stempelato) es una excepción estable y verificada con
+// datos reales (coincidencia de días con su usuario nombrado). nikepick38/31/02
+// Política nueva (confirmada 24/08/2026): nikepick fijo = SIEMPRE Eventual,
+// sin excepciones. Ya no se usa esta lista para clasificar Efectivo/Eventual —
+// solo queda documentada acá por si hace falta rastrear el criterio viejo.
+var PICK_EFECTIVO_EXCEPCIONES={};
+function esEfectivo(user){
+  var u=String(user||'').toLowerCase().replace(/\s+/g,'');
+  return u.indexOf('nikepick')===-1;
+}
+var PICK_VISTA_OPERARIO='global'; // 'efectivos' | 'eventuales' | 'global'
+function cyclePickVistaOperario(){
+  PICK_VISTA_OPERARIO=PICK_VISTA_OPERARIO==='global'?'efectivos':(PICK_VISTA_OPERARIO==='efectivos'?'eventuales':'global');
+  renderChartOperarios();
+}
 function HKT(){return+(CFG.hk_target||0.95);}
 
 // ══ MODULE SWITCH ════════════════════════════════════════════════════════════
 function switchModule(mod){
-  MOD=mod;PAGE=mod==='ctl'?'ctl-resumen':'resumen';SEL=null;
-  ['pick','cam','hk','ing','ctl'].forEach(function(m){document.getElementById('mtab-'+m).classList.toggle('active',m===mod);});
-  var labels={pick:'+ Cargar día',cam:'+ Cargar',hk:'+ Cargar auditoría',ing:'+ Cargar Excel',ctl:'+ Cargar Excel'};
+  MOD=mod;PAGE=mod==='ctl'?'ctl-resumen':(mod==='tr'?'tr-resumen':'resumen');SEL=null;
+  ['pick','cam','hk','ing','ctl','tr'].forEach(function(m){document.getElementById('mtab-'+m).classList.toggle('active',m===mod);});
+  var labels={pick:'+ Cargar día',cam:'+ Cargar',hk:'+ Cargar auditoría',ing:'+ Cargar Excel',ctl:'+ Cargar Excel',tr:'+ Cargar Excel'};
   if(MOD==='cam')labels.cam=PAGE==='cal'?'+ Cargar calidad':'+ Cargar producción';
   document.getElementById('btnLoad').textContent=labels[mod]||'+ Cargar';
   updNav();
   ldr(1,'Cargando...');
   if(MOD==='ing'){
     if(PAGE==='ing-dias'){renderIngresosDias();ldr(0);}
-    else{renderIngResumen();ldr(0);}
+    else{renderIngresosResumen();ldr(0);}
     return;
   }
   if(MOD==='ctl'){
     renderCtlResumen();ldr(0);
+    return;
+  }
+  if(MOD==='tr'){
+    renderTrResumen();ldr(0);
     return;
   }
   updMS().then(function(){
@@ -331,6 +372,28 @@ function brkOverlap(sh,from,to,ymd){
 }
 
 // ══ PICKERS ANALYSIS ═════════════════════════════════════════════════════════
+// Clasificación de turno — confirmada y simplificada con Gus el 14/08/2026:
+// CUALQUIERA que entra a las 10:00 en adelante es de Tarde, sin excepción y sin
+// importar a qué hora corta. No existe "Mañana corta que entra después de las
+// 10" como categoría real — entrar a las 10+ significa Tarde haciendo horas
+// extra desde temprano, siempre. Se sacó la lógica de "mirar la hora de salida
+// para desambiguar" (no servía, mostraba gente de Tarde como Mañana mientras el
+// turno seguía en curso) y el badge de "Tentativo" que la acompañaba.
+//   · Entra 06:00-09:59                                   -> TM
+//   · Entra 10:00-21:59                                    -> TT
+//   · Entra 22:00-05:59, o termina antes de las 06:00       -> TN
+function turnoFinal(firstH, lastH){
+  if(lastH<6) return 'TN';
+  if(lastH<10 && (firstH>=18||firstH<6)) return 'TN';
+  // Entra entre 10 y 13h pero corta antes de las 14h: turno corto de mañana
+  // (vino tarde para TM y se fue antes de que arranque TT), no es TT.
+  // Confirmado con Gus 26/08/2026, validado contra 233 casos reales de
+  // agosto — solo 2 combinaciones cambian de clasificación con esta regla.
+  if(firstH>=10 && firstH<13 && lastH<14) return 'TM';
+  if(firstH>=10 && firstH<22) return 'TT';
+  if(firstH>=22 || firstH<6) return 'TN';
+  return 'TM'; // entró 06:00-09:59
+}
 function analyzePickDay(raw,dk){
   var p=dk.split('-'),yr=+p[0],mo=+p[1]-1,dy=+p[2];
   var wS=new Date(yr,mo,dy,6,0,0),wE=new Date(yr,mo,dy+1,6,0,0);
@@ -340,18 +403,37 @@ function analyzePickDay(raw,dk){
     var fk=ks.find(function(k){return /^inicio$/i.test(k);})||ks.find(function(k){return /fecha|date/i.test(k);});
     var uk=ks.find(function(k){return /usuario|user/i.test(k);});
     var qk=ks.find(function(k){return /cantidad|qty|items/i.test(k);});
-    var skk=ks.find(function(k){return /^sku$/i.test(k)||/^SKU$/i.test(k);});
+    var skk=ks.find(function(k){return /^sku$/i.test(k);})||ks.find(function(k){return /art[ií]culo/i.test(k);});
+    var lk=ks.find(function(k){return /^lpn$/i.test(k);});
     if(!fk||!uk)continue;
     var dt=parseFecha(r[fk]);if(!dt)continue;
-    var u=String(r[uk]||'').trim();if(!u)continue;
-    if(PICK_BLACKLIST.indexOf(u.toLowerCase())>=0)continue;
+    var u=String(r[uk]||'').trim().toUpperCase();if(!u)continue;
+    // Blacklist: NO se filtra acá — el volumen que pickearon cuenta igual para
+    // Meta/Avance/Unidades/Líneas (pasó de verdad). Lo que no corresponde es
+    // medirlos individualmente — eso se filtra en pickRanking() y en la tabla
+    // de detalle por persona, no acá. Corregido 13/08/2026, confirmado con Gus.
     var q=parseFloat(String(r[qk]||'0').replace(',','.'))||0;
-    var sku=skk?String(r[skk]||'').trim().replace(/\.0$/,'').slice(0,10):'';
-    if(dt>=wS&&dt<wE)rows.push({dt:dt,user:u,qty:q,sku:sku});
+    // El Artículo viene con ceros a la izquierda (ej. 000000010298542012).
+    // Convertir a número saca los ceros; los primeros 8 dígitos son el código
+    // "Genérico" que usa el maestro de SKU (el resto es sufijo de talle/color).
+    var skuRaw=skk?String(r[skk]||'').trim().replace(/\.0$/,''):'';
+    var skuNum=skuRaw?String(parseInt(skuRaw,10)||''):'';
+    var sku=skuNum?skuNum.slice(0,8):'';
+    var lpn=lk?String(r[lk]||'').trim():'';
+    if(dt>=wS&&dt<wE)rows.push({dt:dt,user:u,qty:q,sku:sku,lpn:lpn});
   }
   function shOf(dt){var h=dt.getHours();if(h>=6&&h<14)return'TM';if(h>=14&&h<22)return'TT';return'TN';}
+  // Agrupar primero por usuario para no partir una jornada con horas extra en dos
+  // turnos distintos (ej. alguien de TT que entra a las 10 por 4hs extra no debe
+  // aparecer como "otro picker" de TM en el tramo 10-14).
+  var byUserAll={};
+  rows.forEach(function(r){if(!byUserAll[r.user])byUserAll[r.user]=[];byUserAll[r.user].push(r);});
   var shifts={TM:[],TT:[],TN:[]};
-  rows.forEach(function(r){shifts[shOf(r.dt)].push(r);});
+  Object.keys(byUserAll).forEach(function(user){
+    var picks=byUserAll[user].sort(function(a,b){return a.dt-b.dt;});
+    var sh=turnoFinal(picks[0].dt.getHours(), picks[picks.length-1].dt.getHours());
+    picks.forEach(function(r){shifts[sh].push(r);});
+  });
   var STARTS={TM:new Date(yr,mo,dy,6,0),TT:new Date(yr,mo,dy,14,0),TN:new Date(yr,mo,dy,22,0)};
   var result={};
   Object.keys(shifts).forEach(function(sh){
@@ -362,19 +444,26 @@ function analyzePickDay(raw,dk){
       var picks=byU[user].sort(function(a,b){return a.dt-b.dt;});
       var times=picks.map(function(p){return p.dt;}),n=times.length;
       var units=picks.reduce(function(s,p){return s+p.qty;},0);
+      // Bultos: cantidad de LPN (pallet/caja) distintos que tocó esta persona.
+      // Un mismo LPN puede aparecer en varias líneas (varios SKU en el mismo
+      // bulto), por eso se cuenta el SET de valores únicos, no la cantidad de filas.
+      var lpnSet=new Set();
+      picks.forEach(function(p){if(p.lpn)lpnSet.add(p.lpn);});
+      var bultos=lpnSet.size;
       // CIA breakdown
       var ciaCounts={FTW:0,APP:0,EQP:0,unknown:0};
       picks.forEach(function(p){
-        var bu=p.sku?SKU_BU[p.sku.slice(7,15)]:null;
+        var bu=p.sku?SKU_BU[p.sku]:null;
         if(bu==='FTW')ciaCounts.FTW++;
         else if(bu==='APP')ciaCounts.APP++;
         else if(bu==='EQP')ciaCounts.EQP++;
-        else ciaCounts.unknown++;
+        else{ciaCounts.unknown++;if(p.sku)UNCLASSIFIED_SKUS[p.sku]=(UNCLASSIFIED_SKUS[p.sku]||0)+1;}
       });
       // CIA dominante
       var topCia='—';
       var maxC=0;
       ['FTW','APP','EQP'].forEach(function(c){if(ciaCounts[c]>maxC){maxC=ciaCounts[c];topCia=c;}});
+      var startReal=new Date(Math.min(sd.getTime(),times[0].getTime())); // por si arrancó antes del horario oficial (horas extra)
       var preGap=Math.round(Math.max(0,(times[0]-sd)/60000-brkOverlap(sh,sd,times[0],[yr,mo,dy])));
       var inter=0;
       for(var i=0;i<n-1;i++){
@@ -383,10 +472,21 @@ function analyzePickDay(raw,dk){
       }
       inter=Math.round(inter);
       var dead=preGap+inter,exc=Math.max(0,dead-BRK());
-      var elap=Math.max(0,Math.round((times[n-1]-sd)/60000));
-      var prod=Math.max(0,elap-dead),iph=prod>0?Math.round(n/(prod/60)*10)/10:0;
+      var elap=Math.max(0,Math.round((times[n-1]-startReal)/60000));
+      var prod=Math.max(0,elap-dead);
+      // Líneas/hora: contra el tiempo disponible fijo (presencia menos el break/comida
+      // que YA transcurrió según el horario oficial), NO contra "elap-dead" (eso premiaba
+      // parar más — confirmado con Gus 06/08/2026). Ojo: si el turno está a mitad de camino
+      // (ej. exportás datos a las 15:50 de alguien que entró a las 14:00 y su break es a las
+      // 18:00), todavía no le tocó el break — restarle los 90 min fijos igual "come" casi
+      // todo el poco tiempo transcurrido y el número se dispara sin sentido. Por eso se resta
+      // solo la porción del break oficial que se solapa con [startReal, último escaneo],
+      // igual que ya se hace para detectar gaps. Corregido 13/08/2026.
+      var brkYaPasado=brkOverlap(sh,startReal,times[n-1],[yr,mo,dy]);
+      var prodFijo=Math.max(0,elap-brkYaPasado);
+      var iph=prodFijo>0?Math.round(n/(prodFijo/60)*10)/10:0;
       var elapsedMin=n>1?Math.round((times[n-1]-times[0])/60000):0;
-      users.push({user:user,items:n,units:Math.round(units),first:fmtT(times[0]),last:fmtT(times[n-1]),preGap:preGap,inter:inter,dead:dead,allowed:BRK(),exc:exc,prod:prod,iph:iph,elapsedMin:elapsedMin,cia:topCia,ciaCounts:ciaCounts});
+      users.push({user:user,items:n,units:Math.round(units),bultos:bultos,first:fmtT(times[0]),last:fmtT(times[n-1]),preGap:preGap,inter:inter,dead:dead,allowed:BRK(),exc:exc,prod:prod,iph:iph,elapsedMin:elapsedMin,cia:topCia,ciaCounts:ciaCounts});
     });
     users.sort(function(a,b){return b.exc-a.exc;});
     result[sh]=users;
@@ -456,7 +556,7 @@ function buildHKResult(entries){
 }
 
 // ══ LOAD FLOWS ═══════════════════════════════════════════════════════════════
-function doLoad(){checkPass(function(){if(MOD==='pick')showPickUpload();else if(MOD==='cam'&&PAGE==='cal')checkPass(function(){showCalLoad();});else if(MOD==='cam'&&PAGE==='calperf')checkPass(function(){showCalPerfLoad();});else if(MOD==='cam')showCamLoad();else if(MOD==='hk')showHKLoad();else if(MOD==='ctl')showCtlLoad();else showIngresosLoad();});}
+function doLoad(){checkPass(function(){if(MOD==='pick')showPickUpload();else if(MOD==='cam'&&PAGE==='cal')checkPass(function(){showCalLoad();});else if(MOD==='cam'&&PAGE==='calperf')checkPass(function(){showCalPerfLoad();});else if(MOD==='cam')showCamLoad();else if(MOD==='hk')showHKLoad();else if(MOD==='ctl')showCtlLoad();else if(MOD==='tr')showTrLoad();else showIngresosLoad();});}
 function checkPass(action){var p=prompt('Contraseña:');if(p===APP_PASS)action();else if(p!==null)toast('Contraseña incorrecta','err');}
 
 function showPickUpload(){
@@ -492,31 +592,46 @@ function parseExcelSerial(v){
 
 async function processPickBI(rows,fname){
   ldr(1,'Procesando BI...');
-  // Filtrar filas válidas (turno TM/TT/TN y colaborador no vacío)
+  // Ya no se filtra ni se agrupa por la columna "Turno" del archivo de origen —
+  // esa columna puede venir mal (caso real 06/08/2026: gente de Tarde con horas
+  // extra, entrando 10am, etiquetada como Mañana en el BI). Se recalcula siempre
+  // con turnoFinal() a partir de la hora real de entrada/salida de cada colaborador.
   var valid=rows.filter(function(r){
-    var t=String(r['Turno']||r['TURNO']||'').trim();
     var c=String(r['Colaborador']||r['COLABORADOR']||'').trim();
-    return (t==='TM'||t==='TT'||t==='TN')&&c;
+    return !!c;
   });
   if(!valid.length){toast('Sin datos válidos en el BI','err');ldr(0);return;}
 
-  // Agrupar por fecha base + turno + colaborador
-  var grupos={};
+  // Agrupar por fecha base + colaborador (todavía sin turno — se calcula después)
+  var porDia={};
   valid.forEach(function(r){
-    var turno=String(r['Turno']||r['TURNO']||'').trim();
     var colab=String(r['Colaborador']||r['COLABORADOR']||'').trim();
-    if(PICK_BLACKLIST.indexOf(colab.toLowerCase())>=0)return;
+    // Blacklist: NO se filtra acá, mismo criterio que analyzePickDay — el
+    // volumen cuenta, solo se oculta la medición individual (pickRanking y
+    // tabla de detalle por persona).
     var cia=String(r['Cía']||r['CIA']||r['Cia']||'').trim();
     var lineas=parseFloat(String(r['Líneas']||r['Lineas']||r['LINEAS']||'0'))||0;
     var fMin=parseExcelSerial(r['Fecha Minima']||r['FECHA MINIMA']||r['fecha minima']);
     var fMax=parseExcelSerial(r['Fecha Maxima']||r['FECHA MAXIMA']||r['fecha maxima']);
     if(!fMin)return;
     var dk=baseDate(fMin);
-    if(!grupos[dk])grupos[dk]={TM:{},TT:{},TN:{}};
-    if(!grupos[dk][turno][colab])grupos[dk][turno][colab]={items:0,first:fMin,last:fMax||fMin,cia:cia};
-    grupos[dk][turno][colab].items+=lineas;
-    if(fMin<grupos[dk][turno][colab].first)grupos[dk][turno][colab].first=fMin;
-    if(fMax&&fMax>grupos[dk][turno][colab].last)grupos[dk][turno][colab].last=fMax;
+    if(!porDia[dk])porDia[dk]={};
+    if(!porDia[dk][colab])porDia[dk][colab]={items:0,first:fMin,last:fMax||fMin,cia:cia};
+    var u=porDia[dk][colab];
+    u.items+=lineas;
+    if(fMin<u.first)u.first=fMin;
+    if(fMax&&fMax>u.last)u.last=fMax;
+  });
+
+  // Ahora sí armar los grupos por turno, calculado con turnoFinal (no con la columna origen)
+  var grupos={};
+  Object.keys(porDia).forEach(function(dk){
+    grupos[dk]={TM:{},TT:{},TN:{}};
+    Object.keys(porDia[dk]).forEach(function(colab){
+      var u=porDia[dk][colab];
+      var sh=turnoFinal(u.first.getHours(), u.last.getHours());
+      grupos[dk][sh][colab]=u;
+    });
   });
 
   // Convertir a formato igual que analyzePickDay
@@ -534,9 +649,16 @@ async function processPickBI(rows,fname){
         var elapsed=Math.round((u.last-u.first)/60000);
         var gap=Math.max(0,Math.round((u.first-(sh==='TM'?wS:sh==='TT'?new Date(dk+'T14:00:00'):new Date(dk+'T22:00:00')))/60000));
         var dead=Math.max(0,elapsed-u.items);
-        var exc=Math.max(0,dead-90);
+        var exc=Math.max(0,dead-BRK());
         var prod=Math.max(0,elapsed-dead);
-        var iph=prod>0?Math.round(u.items/(prod/60)*10)/10:u.items;
+        // Mismo criterio que analyzePickDay: restar solo el break que ya transcurrió
+        // según el horario, no los 90 min fijos siempre — si la foto es a mitad de
+        // turno (antes de la hora de break), no le toca nada restado todavía.
+        var dkParts=dk.split('-');
+        var ymd=[+dkParts[0],+dkParts[1]-1,+dkParts[2]];
+        var brkYaPasado=brkOverlap(sh,u.first,u.last,ymd);
+        var prodFijo=Math.max(0,elapsed-brkYaPasado);
+        var iph=prodFijo>0?Math.round(u.items/(prodFijo/60)*10)/10:u.items;
         var fmtH=function(d){return('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2);};
         dayResult[sh].push({
           user:colab,
@@ -633,15 +755,65 @@ function readPickFile(f){
             '<div style="color:var(--accent);font-size:16px">›</div></div>';
         }).join('');
         window._raw=raw;
+        window._datesBatch=dates;
         document.getElementById('main').innerHTML=
           '<div class="upload-area"><div style="background:var(--panel);border:1px solid var(--border);border-radius:16px;padding:26px;max-width:440px;width:100%">'+
           '<div style="font-size:15px;font-weight:700;margin-bottom:6px">Elegí el día</div>'+
-          '<div style="color:var(--muted2);font-size:12px;margin-bottom:14px">'+dates.length+' días disponibles</div>'+opts+'</div></div>';
+          '<div style="color:var(--muted2);font-size:12px;margin-bottom:14px">'+dates.length+' días disponibles</div>'+
+          '<button class="btn btn-p" style="width:100%;margin-bottom:14px" onclick="procesarTodosLosDias(window._raw, window._datesBatch)">⚡ Procesar los '+dates.length+' días de una</button>'+
+          '<div id="progresoBatch" style="display:none;margin-bottom:14px;font-size:12px;color:var(--muted2)"></div>'+
+          opts+'</div></div>';
       }
     }catch(ex){toast('Error: '+ex.message,'err');}
     ldr(0);
   };
   r.readAsArrayBuffer(f);
+}
+async function procesarTodosLosDias(raw, dates){
+  var prog=document.getElementById('progresoBatch');
+  if(prog)prog.style.display='block';
+  if(SKU_BU_PROMISE){
+    if(prog)prog.textContent='Cargando maestro de artículos...';
+    await SKU_BU_PROMISE;
+  }
+  var ok=0, vacios=0, errores=[];
+  for(var i=0;i<dates.length;i++){
+    var dk=dates[i];
+    if(prog)prog.textContent='Procesando '+(i+1)+' de '+dates.length+' — '+dk+'...';
+    try{
+      var result=analyzePickDay(raw,dk);
+      var total=['TM','TT','TN'].reduce(function(a,s){return a+(result[s]||[]).length;},0);
+      if(!total){vacios++;continue;}
+      // Merge por usuario con lo ya guardado — el archivo BI a veces arranca a
+      // mitad de un turno (export parcial: ej. "del 23 al hoy" pero el corte
+      // real del origen empieza recién a las 23:58 del 23), y sin este merge
+      // ese archivo parcial pisaba el día completo ya cargado, dejando TM/TT
+      // en 0 aunque ya existieran. Mismo problema que tuvo Mesa de Control,
+      // corregido acá igual: no reemplazar el día entero, fusionar turno por
+      // turno y usuario por usuario. Caso real: 28/09/2026, día 23 quedaba en 0.
+      if(DB.pick[dk]){
+        ['TM','TT','TN'].forEach(function(sh){
+          var exU={};
+          (DB.pick[dk][sh]||[]).forEach(function(u){exU[u.user]=u;});
+          (result[sh]||[]).forEach(function(u){exU[u.user]=u;});
+          result[sh]=Object.values(exU).sort(function(a,b){return b.exc-a.exc;});
+        });
+      }
+      var saved=await sbUpsert('pick',dk,result);
+      if(!saved){errores.push(dk+' (no se pudo guardar)');continue;}
+      DB.pick[dk]=result;
+      var nm=dk.slice(0,7);
+      if(nm!==CUR){CUR=nm;await updMS();}
+      ok++;
+    }catch(ex){errores.push(dk+' ('+ex.message+')');}
+  }
+  window._raw=null;
+  PAGE='resumen';updNav();render();
+  var msg='✓ '+ok+' días procesados';
+  if(vacios)msg+=', '+vacios+' sin registros';
+  if(errores.length)msg+=', '+errores.length+' con error';
+  toast(msg, errores.length?'err':'ok');
+  if(errores.length)console.log('Días con error:', errores);
 }
 async function loadPickDate(raw,dk){
   ldr(1,'Analizando...');
@@ -655,7 +827,17 @@ async function loadPickDate(raw,dk){
     var result=analyzePickDay(raw,dk);
     var total=['TM','TT','TN'].reduce(function(a,s){return a+(result[s]||[]).length;},0);
     if(!total){toast('Sin registros para esa fecha','err');ldr(0);return;}
-    // Pisar siempre el día completo — no acumular
+    // Merge por usuario con lo ya guardado — ver comentario en procesarTodosLosDias:
+    // un archivo puede traer solo una porción de un turno (export parcial) y no
+    // debe pisar el día completo ya cargado. Corregido 28/09/2026.
+    if(DB.pick[dk]){
+      ['TM','TT','TN'].forEach(function(sh){
+        var exU={};
+        (DB.pick[dk][sh]||[]).forEach(function(u){exU[u.user]=u;});
+        (result[sh]||[]).forEach(function(u){exU[u.user]=u;});
+        result[sh]=Object.values(exU).sort(function(a,b){return b.exc-a.exc;});
+      });
+    }
     ldr(1,'Guardando...');
     var ok=await sbUpsert('pick',dk,result);if(!ok){ldr(0);return;}
     DB.pick[dk]=result;window._raw=null;
@@ -779,10 +961,44 @@ function parseHKExcel(text){
 }
 
 // ══ RENDER ROUTER ════════════════════════════════════════════════════════════
+// Aviso de SKUs que aparecieron en el BI pero no están en el maestro de
+// artículos (sku_bu_base) — típicamente productos nuevos recién ingresados.
+// Se acumula durante analyzePickDay a medida que se cargan/reprocesan días.
+function renderUnclassifiedAlert(){
+  var el=document.getElementById('unclassifiedAlert');
+  var skus=Object.keys(UNCLASSIFIED_SKUS);
+  if(!skus.length){el.style.display='none';return;}
+  var totalLineas=skus.reduce(function(s,k){return s+UNCLASSIFIED_SKUS[k];},0);
+  el.style.display='block';
+  el.innerHTML='⚠️ <strong>'+skus.length+' SKU'+(skus.length===1?'':'s')+' sin clasificar</strong><br>'+
+    '<span style="color:var(--muted2)">'+totalLineas+' línea'+(totalLineas===1?'':'s')+' sin CIA asignada</span><br>'+
+    '<span style="text-decoration:underline;font-size:10px">Ver detalle</span>';
+}
+function showModal(html){
+  document.getElementById('modalGenericBody').innerHTML=html;
+  document.getElementById('modalGeneric').classList.add('on');
+}
+function closeGenericModal(){
+  document.getElementById('modalGeneric').classList.remove('on');
+}
+function showUnclassifiedDetail(){
+  var skus=Object.keys(UNCLASSIFIED_SKUS).sort(function(a,b){return UNCLASSIFIED_SKUS[b]-UNCLASSIFIED_SKUS[a];});
+  if(!skus.length)return;
+  var rows=skus.map(function(s){return '<tr><td style="font-family:monospace">'+s+'</td><td>'+UNCLASSIFIED_SKUS[s]+' líneas</td></tr>';}).join('');
+  var html='<div style="padding:4px">'+
+    '<div style="font-weight:700;margin-bottom:10px;font-size:14px">SKUs sin clasificar en el maestro</div>'+
+    '<div style="font-size:12px;color:var(--muted2);margin-bottom:14px;line-height:1.5">Estos códigos (el número de Artículo sin los ceros a la izquierda, primeros 8 dígitos) no están en el maestro de SKU→CIA — probablemente productos nuevos. Sus líneas cuentan igual en los totales generales, pero no se les asigna FTW/APP/EQP hasta que agregues el SKU al maestro (Configuración → Maestro de Artículos).</div>'+
+    '<table style="width:100%;font-size:12px"><thead><tr><th style="text-align:left;padding:6px 0;color:var(--muted2)">SKU</th><th style="text-align:left;padding:6px 0;color:var(--muted2)">Líneas afectadas</th></tr></thead><tbody>'+rows+'</tbody></table>'+
+    '<div style="margin-top:16px;text-align:right"><button class="btn btn-o btn-sm" onclick="closeGenericModal()">Cerrar</button></div>'+
+    '</div>';
+  showModal(html);
+}
+
 function render(){
   updateSB();
+  renderUnclassifiedAlert();
   var ctlHasData=MOD==='ctl'&&Object.keys(DB_CTL||{}).length>0;
-  document.getElementById('btnExport').style.display=(ctlHasData||(MOD!=='ing'&&MOD!=='ctl'&&Object.keys(DB[MOD]||{}).length))?'inline-block':'none';
+  document.getElementById('btnExport').style.display=(ctlHasData||(MOD!=='ing'&&MOD!=='ctl'&&MOD!=='tr'&&Object.keys(DB[MOD]||{}).length))?'inline-block':'none';
   if(PAGE==='config'){renderConfig();return;}
   if(MOD==='ing'){
     if(PAGE==='ing-dias')renderIngresosDias();
@@ -793,6 +1009,10 @@ function render(){
     if(PAGE==='ctl-resumen')renderCtlResumen();
     else if(PAGE==='ctl-dias')renderCtlDias();
     else if(PAGE==='ctl-tendencias')renderCtlTendencias();
+    return;
+  }
+  if(MOD==='tr'){
+    renderTrResumen();
     return;
   }
   var days=Object.keys(DB[MOD]).sort();
@@ -820,9 +1040,6 @@ function render(){
   }else if(MOD==='hk'){
     if(PAGE==='resumen')renderHKResumen();
     else if(PAGE==='dias')SEL&&DB.hk[SEL]?renderHKDayDetail(SEL):renderHKDias();
-  }else if(MOD==='ing'){
-    if(PAGE==='ing-dias')renderIngresosDias();
-    else renderIngResumen();
   }
 }
 
@@ -855,6 +1072,16 @@ function renderConfig(){
     '<button class="btn btn-p btn-sm" onclick="document.getElementById(\'fiMaestro\').click()">Cargar maestro</button>'+
     '<input type="file" id="fiMaestro" accept=".xlsx,.xls" onchange="loadMaestro(this.files[0])" style="display:none">'+
     '</div>'+
+    '</div>'+
+    // Maestro de usuarios (nikepick -> Nombre)
+    '<div class="tw" style="padding:18px">'+
+    '<div style="font-size:13px;font-weight:700;margin-bottom:6px">🧑 Maestro de Usuarios (nikepick → Nombre)</div>'+
+    '<div style="font-size:11px;color:var(--muted2);margin-bottom:12px">Cargá el Excel con las columnas USUARIOS/NOMBRE — asigna el nombre real a cada cuenta genérica (nikepick01, nikepick02...). Podés volver a subirlo cuando agregues nombres nuevos, no hace falta borrar nada antes.</div>'+
+    '<div id="pickerNamesStatus" style="font-size:12px;color:var(--muted2);margin-bottom:10px">Verificando...</div>'+
+    '<div style="display:flex;gap:8px;align-items:center">'+
+    '<button class="btn btn-p btn-sm" onclick="document.getElementById(\'fiPickerNames\').click()">Cargar maestro de usuarios</button>'+
+    '<input type="file" id="fiPickerNames" accept=".xlsx,.xls" onchange="loadPickerNamesMaestro(this.files[0])" style="display:none">'+
+    '</div>'+
     '</div></div>';
   // Check cuántos SKUs hay cargados
   fetch(SB_URL+'/rest/v1/sku_bu?select=sku&limit=1',{headers:SBH})
@@ -864,6 +1091,15 @@ function renderConfig(){
       document.getElementById('skuBuStatus').style.color=d.length>0?'var(--green)':'var(--yellow)';
     }).catch(function(){
       document.getElementById('skuBuStatus').textContent='Sin datos cargados';
+    });
+  // Check cuántos nombres de picker hay cargados
+  fetch(SB_URL+'/rest/v1/picker_names?select=usuario&limit=1',{headers:SBH})
+    .then(function(r){return r.json();})
+    .then(function(d){
+      document.getElementById('pickerNamesStatus').textContent=d.length>0?'✅ Maestro cargado ('+Object.keys(PICKER_NAMES).length+' nombres)':'⚠️ Sin datos — cargá el maestro para ver nombres reales en vez de nikepick';
+      document.getElementById('pickerNamesStatus').style.color=d.length>0?'var(--green)':'var(--yellow)';
+    }).catch(function(){
+      document.getElementById('pickerNamesStatus').textContent='Sin datos cargados (¿existe la tabla picker_names en Supabase?)';
     });
 }
 
@@ -917,6 +1153,52 @@ async function loadMaestro(file){
     toast('Error: '+err.message,'err');ldr(0);
   }
 }
+async function loadPickerNamesMaestro(file){
+  if(!file)return;
+  ldr(1,'Leyendo maestro de usuarios...');
+  try{
+    var reader=new FileReader();
+    reader.onload=async function(e){
+      var wb=XLSX.read(e.target.result,{type:'array',raw:true});
+      var ws=wb.Sheets[wb.SheetNames[0]];
+      var rows=XLSX.utils.sheet_to_json(ws,{defval:''});
+      var batch=[];
+      var seen=new Set();
+      rows.forEach(function(r){
+        var usuario=String(r['USUARIOS']||r['Usuario']||r['usuario']||'').trim();
+        var nombre=String(r['NOMBRE']||r['Nombre']||r['nombre']||'').trim();
+        if(!usuario||!nombre||seen.has(usuario.toLowerCase()))return;
+        seen.add(usuario.toLowerCase());
+        batch.push({usuario:usuario.toLowerCase(),nombre:nombre});
+      });
+      if(!batch.length){
+        toast('No se encontraron filas con USUARIOS y NOMBRE — revisá los encabezados del Excel','err');
+        ldr(0);return;
+      }
+      toast('Procesando '+batch.length+' usuarios...','ok');
+      ldr(1,'Cargando en Supabase...');
+      try{
+        var r=await fetch(SB_URL+'/rest/v1/picker_names',{
+          method:'POST',
+          headers:Object.assign({},SBH,{'Prefer':'resolution=merge-duplicates,return=minimal'}),
+          body:JSON.stringify(batch)
+        });
+        ldr(0);
+        if(r.ok){
+          batch.forEach(function(b){PICKER_NAMES[b.usuario]=b.nombre;});
+          toast('✅ Maestro de usuarios cargado — '+batch.length+' nombres','ok');
+        } else {
+          var errTxt=await r.text();
+          toast('⚠️ Error al cargar — ¿existe la tabla picker_names en Supabase? '+errTxt.slice(0,120),'err');
+        }
+      }catch(ex){ ldr(0); toast('Error de red: '+ex.message,'err'); }
+      renderConfig();
+    };
+    reader.readAsArrayBuffer(file);
+  }catch(err){
+    toast('Error: '+err.message,'err');ldr(0);
+  }
+}
 function saveConfig(){
   CFG.gap=+document.getElementById('cfgGap').value||15;
   CFG.brk=+document.getElementById('cfgBrk').value||90;
@@ -925,13 +1207,34 @@ function saveConfig(){
 }
 
 // ══ PICKERS RENDERS ══════════════════════════════════════════════════════════
+// Confirmado 05/08/2026 con Gus + verificado con datos reales de agosto (coincidencia
+// de días 100% en los 3 casos = mismo patrón de horas extra, no personas distintas):
+//   nikepick01 -> lstempelatto (Stempelato Lucas)   coincidencia 2/2 días
+//   nikepick02 -> mvcanuqueo   (Cañuqueo Victoria)  coincidencia 3/3 días
+//   nikepick31 -> prhernandez  (Hernandez Patricia) coincidencia 1/1 días
+// nikepick38 (Bermo Martina) queda sin fusionar: Gus no tiene un usuario con nombre
+// conocido para ella, no fusionar sin confirmar para no mezclar con un Eventual real.
+// Confirmado 06/08/2026 con Gus: los usuarios genéricos nikepickXX se los están
+// reasignando los supervisores a operarios DISTINTOS según el día — no hay una
+// persona fija detrás de cada número. El caso de Stempelato (nikepick01) es la
+// excepción confirmada y estable, no la regla. Por eso NO se fusiona nikepick02
+// ni nikepick31 aunque en agosto haya coincidido con Cañuqueo/Hernandez esos
+// días puntuales — sería atribuirle a ellas el trabajo de otra persona el día
+// que el supervisor le dé ese usuario a alguien más. Reevaluar cuando del lado
+// de operaciones agreguen un identificador al usuario para distinguir quién lo
+// usó cada día.
+var PICK_ALIAS_MERGE={'nikepick01':'lstempelatto'};
 function pickRanking(){
   var map={};
   Object.keys(DB.pick).forEach(function(dk){
     ['TM','TT','TN'].forEach(function(sh){
       (DB.pick[dk][sh]||[]).forEach(function(u){
-        if(!map[u.user])map[u.user]={user:u.user,days:0,items:0,units:0,iph_s:0,dead:0,exc:0,prod:0,elapsed:0};
-        var r=map[u.user];r.days++;r.items+=u.items;r.units+=u.units;r.iph_s+=u.iph;r.dead+=u.dead;r.exc+=u.exc;r.prod+=u.prod;r.elapsed+=(u.elapsedMin||0);
+        if(inPickBlacklist(u.user))return; // no se mide individualmente, pero su volumen ya quedó contado en los totales agregados (pickShift, avance, etc.)
+        var key=String(u.user||'').toLowerCase().replace(/\s+/g,'');
+        var mergeTo=PICK_ALIAS_MERGE[key];
+        var mapKey=mergeTo?mergeTo:key;
+        if(!map[mapKey])map[mapKey]={user:mergeTo?mergeTo.toUpperCase():u.user,days:0,items:0,units:0,bultos:0,iph_s:0,dead:0,exc:0,prod:0,elapsed:0};
+        var r=map[mapKey];r.days++;r.items+=u.items;r.units+=u.units;r.bultos+=(u.bultos||0);r.iph_s+=u.iph;r.dead+=u.dead;r.exc+=u.exc;r.prod+=u.prod;r.elapsed+=(u.elapsedMin||0);
       });
     });
   });
@@ -942,18 +1245,458 @@ function pickRanking(){
   }).sort(function(a,b){return b.exc-a.exc;});
 }
 function pickShift(){
-  var res={TM:{items:0,exc:0,dead:0,prod:0,pk:new Set(),iph_s:0,n:0},TT:{items:0,exc:0,dead:0,prod:0,pk:new Set(),iph_s:0,n:0},TN:{items:0,exc:0,dead:0,prod:0,pk:new Set(),iph_s:0,n:0}};
+  var res={TM:{items:0,units:0,exc:0,dead:0,prod:0,pk:new Set(),iph_s:0,n:0},TT:{items:0,units:0,exc:0,dead:0,prod:0,pk:new Set(),iph_s:0,n:0},TN:{items:0,units:0,exc:0,dead:0,prod:0,pk:new Set(),iph_s:0,n:0}};
   Object.keys(DB.pick).forEach(function(dk){
     ['TM','TT','TN'].forEach(function(sh){
-      (DB.pick[dk][sh]||[]).forEach(function(u){res[sh].items+=u.items;res[sh].exc+=u.exc;res[sh].dead+=u.dead;res[sh].prod+=u.prod;res[sh].pk.add(u.user);res[sh].iph_s+=u.iph;res[sh].n++;});
+      (DB.pick[dk][sh]||[]).forEach(function(u){res[sh].items+=u.items;res[sh].units+=(u.units||0);res[sh].exc+=u.exc;res[sh].dead+=u.dead;res[sh].prod+=u.prod;res[sh].pk.add(u.user);res[sh].iph_s+=u.iph;res[sh].n++;});
     });
   });
   Object.keys(res).forEach(function(sh){var r=res[sh];r.avg_iph=r.n>0?Math.round(r.iph_s/r.n*10)/10:0;r.pct=r.prod+r.dead>0?Math.round(r.dead/(r.prod+r.dead)*100):0;r.pickers=r.pk.size;});
   return res;
 }
+// ===================== META DE PICKEO (mensual/diaria) =====================
+window.PICK_METAS={};
+async function loadPickMetas(){
+  try{
+    var r=await fetch(SB_URL+'/rest/v1/pick_metas?select=*&limit=2000',{headers:SBH});
+    var rows=await r.json();
+    window.PICK_METAS={};
+    (rows||[]).forEach(function(row){window.PICK_METAS[row.date_key]=row;});
+  }catch(e){console.log('pick_metas load error:',e);window.PICK_METAS={};}
+}
+function pickMetaMesTotales(){
+  var t={ftw:0,app:0,eqp:0,total:0},aFecha={ftw:0,app:0,eqp:0,total:0};
+  var hoy=new Date().toISOString().slice(0,10);
+  Object.keys(window.PICK_METAS).filter(function(dk){return dk.indexOf(CUR)===0;}).forEach(function(dk){
+    var m=window.PICK_METAS[dk];
+    t.ftw+=m.ftw||0;t.app+=m.app||0;t.eqp+=m.eqp||0;
+    if(dk<=hoy){aFecha.ftw+=m.ftw||0;aFecha.app+=m.app||0;aFecha.eqp+=m.eqp||0;}
+  });
+  t.total=t.ftw+t.app+t.eqp;aFecha.total=aFecha.ftw+aFecha.app+aFecha.eqp;
+  return{meta:t,metaAFecha:aFecha};
+}
+// Corrección puntual: 424 pedidos de Nike (6.751 líneas / 39.156 unidades) que
+// correspondían al plan de Agosto se prepararon y quedaron procesados en Julio
+// en el sistema (sin GI a propósito, pero el BI los contó igual). Se descuentan
+// del avance de Julio y se suman al de Agosto para no duplicar ni perder el dato.
+// Fuente: Deliveries_31_07_26PH.xlsx + Deliveries_03_08_26PH.xlsx (revisado 05/08/2026).
+var PICK_ADELANTOS_AGOSTO={'2026-07':-39156,'2026-08':39156};
+function pickAvanceMes(){
+  var tot=0;
+  Object.keys(DB.pick).filter(function(dk){return dk.indexOf(CUR)===0;}).forEach(function(dk){
+    ['TM','TT','TN'].forEach(function(sh){(DB.pick[dk][sh]||[]).forEach(function(u){tot+=u.units||0;});});
+  });
+  tot+=PICK_ADELANTOS_AGOSTO[CUR]||0;
+  return tot;
+}
+function renderPickMetaBlock(){
+  var mt=pickMetaMesTotales(),meta=mt.meta,metaAFecha=mt.metaAFecha;
+  var avance=pickAvanceMes();
+  var pct=meta.total>0?Math.round(avance/meta.total*100):0;
+  var difPlan=avance-metaAFecha.total;
+  if(!meta.total){
+    return '<div class="meta-block" style="background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:14px 18px;margin-bottom:16px;display:flex;justify-content:space-between;align-items:center">'+
+      '<div style="color:var(--muted);font-size:13px">Sin plan cargado para '+fmtMonth(CUR)+'.</div>'+
+      '<button class="btn btn-o btn-xs" onclick="showPickMetaUpload()">📥 Cargar plan (Excel)</button>'+
+      '</div>';
+  }
+  var kpis=mkStats([
+    {l:'Meta del mes',v:meta.total.toLocaleString('es-AR'),s:fmtMonth(CUR)},
+    {l:'Avance del mes',v:avance.toLocaleString('es-AR'),s:'unidades pickeadas'},
+    {l:'% Cumplido',v:pct+'%',cls:pct>=95?'cok':pct>=75?'cwrn':'cbad'},
+    {l:'Meta a la fecha',v:metaAFecha.total.toLocaleString('es-AR'),s:'plan acumulado a hoy'},
+    {l:'Diferencia vs plan',v:(difPlan>=0?'+':'')+difPlan.toLocaleString('es-AR'),cls:difPlan>=0?'cok':'cbad',s:difPlan>=0?'adelantado':'atrasado'}
+  ]);
+  var adel=PICK_ADELANTOS_AGOSTO[CUR]||0;
+  var nota=adel?'<div style="font-size:11px;color:var(--muted);margin:-8px 0 10px">⚠️ Avance ajustado en '+(adel>0?'+':'')+adel.toLocaleString('es-AR')+' unidades por corrección de pedidos de Agosto procesados en Julio (ver comentario en código, PICK_ADELANTOS_AGOSTO).</div>':'';
+  return '<div style="margin-bottom:16px">'+kpis+nota+
+    '<div style="display:flex;gap:8px;margin:-6px 0 16px">'+
+    '<button class="btn btn-o btn-xs" onclick="togglePickMetaEdit()">✏️ Editar plan diario</button>'+
+    '<button class="btn btn-o btn-xs" onclick="showPickMetaUpload()">📥 Cargar / reemplazar plan</button>'+
+    '</div>'+
+    '<div id="pickMetaEditWrap" style="display:none">'+buildPickMetaEditTable()+'</div>'+
+    '</div>';
+}
+function togglePickMetaEdit(){
+  var el=document.getElementById('pickMetaEditWrap');
+  if(!el)return;
+  if(el.style.display==='none'){el.innerHTML=buildPickMetaEditTable();el.style.display='block';}
+  else{el.style.display='none';}
+}
+function buildPickMetaEditTable(){
+  var dias=[];
+  var y=+CUR.split('-')[0],mo=+CUR.split('-')[1];
+  var lastDay=new Date(y,mo,0).getDate();
+  for(var d=1;d<=lastDay;d++){
+    var dk=CUR+'-'+String(d).padStart(2,'0');
+    dias.push(dk);
+  }
+  var rows=dias.map(function(dk){
+    var m=window.PICK_METAS[dk]||{ftw:0,app:0,eqp:0};
+    var fp=dk.split('-'),lbl=(+fp[2])+'/'+fp[1];
+    return '<tr data-dk="'+dk+'">'+
+      '<td class="tl"><strong>'+lbl+'</strong></td>'+
+      '<td><input type="number" min="0" value="'+(m.ftw||0)+'" data-f="ftw" style="width:80px;background:var(--panel2);border:1px solid var(--border);color:var(--text);border-radius:5px;padding:4px 6px"></td>'+
+      '<td><input type="number" min="0" value="'+(m.app||0)+'" data-f="app" style="width:80px;background:var(--panel2);border:1px solid var(--border);color:var(--text);border-radius:5px;padding:4px 6px"></td>'+
+      '<td><input type="number" min="0" value="'+(m.eqp||0)+'" data-f="eqp" style="width:80px;background:var(--panel2);border:1px solid var(--border);color:var(--text);border-radius:5px;padding:4px 6px"></td>'+
+      '</tr>';
+  }).join('');
+  return mkTable('Plan diario editable — '+fmtMonth(CUR),
+    '<tr><th>Fecha</th><th>FTW</th><th>APP</th><th>EQP</th></tr>',rows)+
+    '<div style="padding:12px 0"><button class="btn btn-p btn-xs" onclick="savePickMetaTable()">💾 Guardar cambios</button></div>';
+}
+async function savePickMetaTable(){
+  var rows=document.querySelectorAll('#pickMetaEditWrap tr[data-dk]');
+  var batch=[];
+  rows.forEach(function(tr){
+    var dk=tr.getAttribute('data-dk');
+    var ftw=+tr.querySelector('[data-f="ftw"]').value||0;
+    var app=+tr.querySelector('[data-f="app"]').value||0;
+    var eqp=+tr.querySelector('[data-f="eqp"]').value||0;
+    batch.push({date_key:dk,ftw:ftw,app:app,eqp:eqp,updated_at:new Date().toISOString()});
+  });
+  ldr(1,'Guardando plan...');
+  try{
+    var r=await fetch(SB_URL+'/rest/v1/pick_metas',{
+      method:'POST',
+      headers:Object.assign({},SBH,{'Prefer':'resolution=merge-duplicates,return=minimal'}),
+      body:JSON.stringify(batch)
+    });
+    if(!r.ok){throw new Error('HTTP '+r.status+': '+(await r.text()));}
+    await loadPickMetas();
+    toast('✓ Plan guardado');
+    render();
+  }catch(e){toast('Error guardando plan: '+e.message,'err');}
+  ldr(0);
+}
+// ===================== META DE INBOUND / INGRESOS (mensual/diaria) =====================
+// Mismo patrón y mismo formato de Excel (hoja "Plan": Fecha+FTW+APP+EQP) que la
+// Meta de Pickeo, pero comparado contra lo efectivamente recibido (window.ING_DATA),
+// no contra lo pickeado. Pedido por Gus 05/08/2026.
+window.ING_METAS={};
+async function loadIngresosMetas(){
+  try{
+    var r=await fetch(SB_URL+'/rest/v1/ingresos_metas?select=*&limit=2000',{headers:SBH});
+    var rows=await r.json();
+    window.ING_METAS={};
+    (rows||[]).forEach(function(row){window.ING_METAS[row.date_key]=row;});
+  }catch(e){console.log('ingresos_metas load error:',e);window.ING_METAS={};}
+}
+function ingresosMetaMesTotales(){
+  var t={ftw:0,app:0,eqp:0,total:0},aFecha={ftw:0,app:0,eqp:0,total:0};
+  var hoy=new Date().toISOString().slice(0,10);
+  Object.keys(window.ING_METAS).filter(function(dk){return dk.indexOf(CUR)===0;}).forEach(function(dk){
+    var m=window.ING_METAS[dk];
+    t.ftw+=m.ftw||0;t.app+=m.app||0;t.eqp+=m.eqp||0;
+    if(dk<=hoy){aFecha.ftw+=m.ftw||0;aFecha.app+=m.app||0;aFecha.eqp+=m.eqp||0;}
+  });
+  t.total=t.ftw+t.app+t.eqp;aFecha.total=aFecha.ftw+aFecha.app+aFecha.eqp;
+  return{meta:t,metaAFecha:aFecha};
+}
+function ingresosAvanceMes(){
+  // CUR es 'YYYY-MM'; ingresos_data solo guarda 'mes' (1-12), sin año — misma
+  // limitación que ya tiene el resto del módulo de Ingresos.
+  var monthNum=+CUR.split('-')[1];
+  var all=window.ING_DATA||[];
+  var tot=0;
+  all.forEach(function(r){if((r.mes||0)===monthNum)tot+=r.unidades||0;});
+  return tot;
+}
+function renderIngresosMetaBlock(){
+  var mt=ingresosMetaMesTotales(),meta=mt.meta,metaAFecha=mt.metaAFecha;
+  var avance=ingresosAvanceMes();
+  var pct=meta.total>0?Math.round(avance/meta.total*100):0;
+  var difPlan=avance-metaAFecha.total;
+  if(!meta.total){
+    return '<div class="meta-block" style="background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:14px 18px;margin-bottom:16px;display:flex;justify-content:space-between;align-items:center">'+
+      '<div style="color:var(--muted);font-size:13px">Sin plan de Inbound cargado para '+fmtMonth(CUR)+'.</div>'+
+      '<button class="btn btn-o btn-xs" onclick="showIngresosMetaUpload()">📥 Cargar plan (Excel)</button>'+
+      '</div>';
+  }
+  var kpis=mkStats([
+    {l:'Meta Inbound del mes',v:meta.total.toLocaleString('es-AR'),s:fmtMonth(CUR)},
+    {l:'Avance del mes',v:avance.toLocaleString('es-AR'),s:'unidades recibidas'},
+    {l:'% Cumplido',v:pct+'%',cls:pct>=95?'cok':pct>=75?'cwrn':'cbad'},
+    {l:'Meta a la fecha',v:metaAFecha.total.toLocaleString('es-AR'),s:'plan acumulado a hoy'},
+    {l:'Diferencia vs plan',v:(difPlan>=0?'+':'')+difPlan.toLocaleString('es-AR'),cls:difPlan>=0?'cok':'cbad',s:difPlan>=0?'adelantado':'atrasado'}
+  ]);
+  return '<div style="margin-bottom:16px">'+kpis+
+    '<div style="display:flex;gap:8px;margin:-6px 0 16px">'+
+    '<button class="btn btn-o btn-xs" onclick="toggleIngresosMetaEdit()">✏️ Editar plan diario</button>'+
+    '<button class="btn btn-o btn-xs" onclick="showIngresosMetaUpload()">📥 Cargar / reemplazar plan</button>'+
+    '</div>'+
+    '<div id="ingresosMetaEditWrap" style="display:none">'+buildIngresosMetaEditTable()+'</div>'+
+    '</div>';
+}
+function toggleIngresosMetaEdit(){
+  var el=document.getElementById('ingresosMetaEditWrap');
+  if(!el)return;
+  if(el.style.display==='none'){el.innerHTML=buildIngresosMetaEditTable();el.style.display='block';}
+  else{el.style.display='none';}
+}
+function buildIngresosMetaEditTable(){
+  var dias=[];
+  var y=+CUR.split('-')[0],mo=+CUR.split('-')[1];
+  var lastDay=new Date(y,mo,0).getDate();
+  for(var d=1;d<=lastDay;d++){
+    var dk=CUR+'-'+String(d).padStart(2,'0');
+    dias.push(dk);
+  }
+  var rows=dias.map(function(dk){
+    var m=window.ING_METAS[dk]||{ftw:0,app:0,eqp:0};
+    var fp=dk.split('-'),lbl=(+fp[2])+'/'+fp[1];
+    return '<tr data-dk="'+dk+'">'+
+      '<td class="tl"><strong>'+lbl+'</strong></td>'+
+      '<td><input type="number" min="0" value="'+(m.ftw||0)+'" data-f="ftw" style="width:80px;background:var(--panel2);border:1px solid var(--border);color:var(--text);border-radius:5px;padding:4px 6px"></td>'+
+      '<td><input type="number" min="0" value="'+(m.app||0)+'" data-f="app" style="width:80px;background:var(--panel2);border:1px solid var(--border);color:var(--text);border-radius:5px;padding:4px 6px"></td>'+
+      '<td><input type="number" min="0" value="'+(m.eqp||0)+'" data-f="eqp" style="width:80px;background:var(--panel2);border:1px solid var(--border);color:var(--text);border-radius:5px;padding:4px 6px"></td>'+
+      '</tr>';
+  }).join('');
+  return mkTable('Plan diario de Inbound (editable) — '+fmtMonth(CUR),
+    '<tr><th>Fecha</th><th>FTW</th><th>APP</th><th>EQP</th></tr>',rows)+
+    '<div style="padding:12px 0"><button class="btn btn-p btn-xs" onclick="saveIngresosMetaTable()">💾 Guardar cambios</button></div>';
+}
+async function saveIngresosMetaTable(){
+  var rows=document.querySelectorAll('#ingresosMetaEditWrap tr[data-dk]');
+  var batch=[];
+  rows.forEach(function(tr){
+    var dk=tr.getAttribute('data-dk');
+    var ftw=+tr.querySelector('[data-f="ftw"]').value||0;
+    var app=+tr.querySelector('[data-f="app"]').value||0;
+    var eqp=+tr.querySelector('[data-f="eqp"]').value||0;
+    batch.push({date_key:dk,ftw:ftw,app:app,eqp:eqp,updated_at:new Date().toISOString()});
+  });
+  ldr(1,'Guardando plan de Inbound...');
+  try{
+    var r=await fetch(SB_URL+'/rest/v1/ingresos_metas',{
+      method:'POST',
+      headers:Object.assign({},SBH,{'Prefer':'resolution=merge-duplicates,return=minimal'}),
+      body:JSON.stringify(batch)
+    });
+    if(!r.ok){throw new Error('HTTP '+r.status+': '+(await r.text()));}
+    await loadIngresosMetas();
+    toast('✓ Plan de Inbound guardado');
+    renderIngresosResumen();
+  }catch(e){toast('Error guardando plan: '+e.message,'err');}
+  ldr(0);
+}
+function showIngresosMetaUpload(){
+  document.getElementById('main').innerHTML=
+    '<div class="upload-area">'+
+    '<div class="drop-box" id="ingresosMetaDrop" '+
+    'ondragover="event.preventDefault();this.classList.add(\'drag\')" '+
+    'ondragleave="this.classList.remove(\'drag\')" '+
+    'ondrop="ingresosMetaDrop(event)">'+
+    '<div class="drop-icon">📊</div>'+
+    '<div class="drop-t">Importar plan mensual de Inbound (hoja "Plan")</div>'+
+    '<div class="drop-s">Mismo formato que el plan de Pickers: Fecha + FTW + APP + ACC(EQP), día por día<br>Reemplaza los días que coincidan, no borra el resto del mes</div><br>'+
+    '<button class="btn btn-p" onclick="document.getElementById(\'ingresosMetaFile\').click()">Seleccionar archivo</button>'+
+    '<input type="file" id="ingresosMetaFile" accept=".xlsx,.xlsm,.xls" onchange="ingresosMetaReadFile(this.files[0])">'+
+    '<br><br><button class="btn btn-o btn-xs" onclick="render()">← Volver</button>'+
+    '</div></div>';
+}
+function ingresosMetaDrop(e){
+  e.preventDefault();
+  var b=document.getElementById('ingresosMetaDrop');if(b)b.classList.remove('drag');
+  if(e.dataTransfer.files[0])ingresosMetaReadFile(e.dataTransfer.files[0]);
+}
+function ingresosMetaReadFile(f){
+  if(!f)return;ldr(1,'Leyendo archivo...');
+  var reader=new FileReader();
+  reader.onload=async function(e){
+    try{
+      var wb=XLSX.read(e.target.result,{type:'array',cellDates:true});
+      var sheetName=wb.SheetNames.find(function(n){return n.trim().toLowerCase()==='plan';});
+      if(!sheetName){
+        toast('No se encontró una hoja llamada "Plan" en el archivo. Hojas disponibles: '+wb.SheetNames.join(', '),'err');
+        ldr(0);return;
+      }
+      var ws=wb.Sheets[sheetName];
+      var data=XLSX.utils.sheet_to_json(ws,{header:1,defval:null,raw:true});
+      // La hoja "Plan" tiene varios bloques de columnas lado a lado (Mes/Fecha
+      // compartida + META OUTBOUND + META INBOUND + un resumen semanal duplicado),
+      // y ADEMÁS un texto "META INBOUND"/"META OUTBOUND" repetido más arriba en una
+      // sección de resumen ("Meta Original" vs "Meta Actualizada") que NO es la
+      // tabla diaria real. Por eso no alcanza con encontrar el texto "INBOUND":
+      // hay que validar que la fila de abajo tenga de verdad encabezados
+      // Fecha/FTW/APP/ACC cerca de esa columna antes de darla por buena.
+      var candidatos=[];
+      for(var li=0;li<data.length;li++){
+        var lrow=data[li];if(!lrow)continue;
+        for(var lc=0;lc<lrow.length;lc++){
+          if(lrow[lc]!=null&&/inbound/i.test(String(lrow[lc]))){candidatos.push({row:li,col:lc});}
+        }
+      }
+      var labelRow=-1,labelCol=-1;
+      for(var ci=0;ci<candidatos.length;ci++){
+        var cand=candidatos[ci],hrTest=data[cand.row+1]||[];
+        var okFtw=false;
+        for(var tc=cand.col;tc<Math.min(hrTest.length,cand.col+6);tc++){
+          if(String(hrTest[tc]||'').trim().toUpperCase()==='FTW'){okFtw=true;break;}
+        }
+        if(okFtw){labelRow=cand.row;labelCol=cand.col;break;}
+      }
+      if(labelRow<0){
+        toast('No se encontró una tabla "META INBOUND" válida (con encabezados Fecha/FTW/APP/ACC) en la hoja "Plan". Revisá el archivo.','err');
+        ldr(0);return;
+      }
+      var headerRowIdx=labelRow+1;
+      var hrow=data[headerRowIdx]||[];
+      var colFecha=hrow.findIndex(function(c){return String(c).trim().toLowerCase()==='fecha';});
+      var colFtw=-1,colApp=-1,colEqp=-1;
+      for(var hc=labelCol;hc<hrow.length;hc++){
+        var v=String(hrow[hc]||'').trim().toUpperCase();
+        if(v==='FTW'&&colFtw<0)colFtw=hc;
+        else if(v==='APP'&&colApp<0)colApp=hc;
+        else if((v==='ACC'||v==='EQP')&&colEqp<0)colEqp=hc;
+      }
+      if(colFecha<0||colFtw<0||colApp<0||colEqp<0){
+        toast('Se encontró "META INBOUND" pero no las columnas Fecha/FTW/APP/ACC debajo. Revisá el archivo.','err');
+        ldr(0);return;
+      }
+      var batch=[];
+      data.forEach(function(row,idx){
+        if(idx<=headerRowIdx)return;
+        var fecha=row[colFecha];
+        if(!(fecha instanceof Date)||isNaN(fecha))return;
+        var ftw=row[colFtw],app=row[colApp],eqp=row[colEqp];
+        var dk=fecha.toISOString().slice(0,10);
+        batch.push({date_key:dk,ftw:+ftw||0,app:+app||0,eqp:+eqp||0,updated_at:new Date().toISOString()});
+      });
+      if(!batch.length){toast('No se encontraron filas de plan válidas','err');ldr(0);return;}
+      var r=await fetch(SB_URL+'/rest/v1/ingresos_metas',{
+        method:'POST',
+        headers:Object.assign({},SBH,{'Prefer':'resolution=merge-duplicates,return=minimal'}),
+        body:JSON.stringify(batch)
+      });
+      if(!r.ok){throw new Error('HTTP '+r.status+': '+(await r.text()));}
+      await loadIngresosMetas();
+      var totCheck=batch.reduce(function(s,r){return s+r.ftw+r.app+r.eqp;},0);
+      toast('✓ '+batch.length+' días cargados — Meta Inbound total: '+totCheck.toLocaleString('es-AR')+' unidades');
+      PAGE='resumen';updNav();renderIngresosResumen();
+    }catch(ex){toast('Error: '+ex.message,'err');}
+    ldr(0);
+  };
+  reader.readAsArrayBuffer(f);
+}
+
+function showPickMetaUpload(){
+  document.getElementById('main').innerHTML=
+    '<div class="upload-area">'+
+    '<div class="drop-box" id="pickMetaDrop" '+
+    'ondragover="event.preventDefault();this.classList.add(\'drag\')" '+
+    'ondragleave="this.classList.remove(\'drag\')" '+
+    'ondrop="pickMetaDrop(event)">'+
+    '<div class="drop-icon">📊</div>'+
+    '<div class="drop-t">Importar plan mensual (hoja "Plan")</div>'+
+    '<div class="drop-s">Fecha + FTW + APP + ACC(EQP), día por día<br>Reemplaza los días que coincidan, no borra el resto del mes</div><br>'+
+    '<button class="btn btn-p" onclick="document.getElementById(\'pickMetaFile\').click()">Seleccionar archivo</button>'+
+    '<input type="file" id="pickMetaFile" accept=".xlsx,.xlsm,.xls" onchange="pickMetaReadFile(this.files[0])">'+
+    '<br><br><button class="btn btn-o btn-xs" onclick="render()">← Volver</button>'+
+    '</div></div>';
+}
+function pickMetaDrop(e){
+  e.preventDefault();
+  var b=document.getElementById('pickMetaDrop');if(b)b.classList.remove('drag');
+  if(e.dataTransfer.files[0])pickMetaReadFile(e.dataTransfer.files[0]);
+}
+function pickMetaReadFile(f){
+  if(!f)return;ldr(1,'Leyendo archivo...');
+  var reader=new FileReader();
+  reader.onload=async function(e){
+    try{
+      var wb=XLSX.read(e.target.result,{type:'array',cellDates:true});
+      // Buscar la hoja "Plan" de forma exacta primero (sin ambigüedad con otras hojas
+      // como "Avance Jul 26" que tienen columnas FTW/APP/EQP en otras posiciones).
+      var sheetName=wb.SheetNames.find(function(n){return n.trim().toLowerCase()==='plan';});
+      if(!sheetName){
+        toast('No se encontró una hoja llamada "Plan" en el archivo. Hojas disponibles: '+wb.SheetNames.join(', '),'err');
+        ldr(0);return;
+      }
+      var ws=wb.Sheets[sheetName];
+      var data=XLSX.utils.sheet_to_json(ws,{header:1,defval:null,raw:true});
+      // Si el archivo tiene varios bloques lado a lado (como el plan combinado que
+      // también trae INBOUND), preferir puntualmente el bloque etiquetado "OUTBOUND".
+      // Si no hay esa etiqueta (archivos simples de un solo bloque, como antes),
+      // cae al comportamiento anterior de tomar la primera columna FTW/APP/EQP.
+      var colFecha=-1,colFtw=-1,colApp=-1,colEqp=-1,headerRowIdx=-1;
+      var candidatosOut=[];
+      for(var li=0;li<data.length;li++){
+        var lrow=data[li];if(!lrow)continue;
+        for(var lc=0;lc<lrow.length;lc++){
+          if(lrow[lc]!=null&&/outbound/i.test(String(lrow[lc]))){candidatosOut.push({row:li,col:lc});}
+        }
+      }
+      var labelRow=-1,labelCol=-1;
+      for(var coi=0;coi<candidatosOut.length;coi++){
+        var candO=candidatosOut[coi],hrTestO=data[candO.row+1]||[];
+        var okFtwO=false;
+        for(var tco=candO.col;tco<Math.min(hrTestO.length,candO.col+6);tco++){
+          if(String(hrTestO[tco]||'').trim().toUpperCase()==='FTW'){okFtwO=true;break;}
+        }
+        if(okFtwO){labelRow=candO.row;labelCol=candO.col;break;}
+      }
+      if(labelRow>=0){
+        headerRowIdx=labelRow+1;
+        var hrow2=data[headerRowIdx]||[];
+        colFecha=hrow2.findIndex(function(c){return String(c).trim().toLowerCase()==='fecha';});
+        for(var hc=labelCol;hc<hrow2.length;hc++){
+          var v2=String(hrow2[hc]||'').trim().toUpperCase();
+          if(v2==='FTW'&&colFtw<0)colFtw=hc;
+          else if(v2==='APP'&&colApp<0)colApp=hc;
+          else if((v2==='ACC'||v2==='EQP')&&colEqp<0)colEqp=hc;
+        }
+      }
+      // Detectar las columnas por NOMBRE, no por posición fija — la posición varía
+      // según cómo cada exportación de Excel maneje las columnas vacías al principio.
+      if(colFecha<0||colFtw<0||colApp<0||colEqp<0){
+        colFecha=-1;colFtw=-1;colApp=-1;colEqp=-1;headerRowIdx=-1;
+        for(var hi=0;hi<data.length;hi++){
+          var hrow=data[hi];if(!hrow)continue;
+          var fIdx=hrow.findIndex(function(c){return String(c).trim().toLowerCase()==='fecha';});
+          if(fIdx<0)continue;
+          var ftwIdx=hrow.findIndex(function(c){return String(c).trim().toUpperCase()==='FTW';});
+          var appIdx=hrow.findIndex(function(c){return String(c).trim().toUpperCase()==='APP';});
+          var eqpIdx=hrow.findIndex(function(c){return ['ACC','EQP'].indexOf(String(c).trim().toUpperCase())>=0;});
+          if(ftwIdx>fIdx&&appIdx>fIdx&&eqpIdx>fIdx){colFecha=fIdx;colFtw=ftwIdx;colApp=appIdx;colEqp=eqpIdx;headerRowIdx=hi;break;}
+        }
+      }
+      if(colFecha<0){
+        toast('No se encontraron las columnas Fecha/FTW/APP/EQP en la hoja "Plan". Revisá el archivo.','err');
+        ldr(0);return;
+      }
+      var batch=[];
+      data.forEach(function(row,idx){
+        if(idx<=headerRowIdx)return;
+        var fecha=row[colFecha];
+        if(!(fecha instanceof Date)||isNaN(fecha))return;
+        var ftw=row[colFtw],app=row[colApp],eqp=row[colEqp];
+        // Un día siempre se guarda, aunque FTW/APP/EQP vengan vacíos (ej. "No laborable")
+        // — así una carga nueva pisa cualquier resto de una carga anterior, no lo salta.
+        var dk=fecha.toISOString().slice(0,10);
+        batch.push({date_key:dk,ftw:+ftw||0,app:+app||0,eqp:+eqp||0,updated_at:new Date().toISOString()});
+      });
+      if(!batch.length){toast('No se encontraron filas de plan válidas','err');ldr(0);return;}
+      var r=await fetch(SB_URL+'/rest/v1/pick_metas',{
+        method:'POST',
+        headers:Object.assign({},SBH,{'Prefer':'resolution=merge-duplicates,return=minimal'}),
+        body:JSON.stringify(batch)
+      });
+      if(!r.ok){throw new Error('HTTP '+r.status+': '+(await r.text()));}
+      await loadPickMetas();
+      var totCheck=batch.reduce(function(s,r){return s+r.ftw+r.app+r.eqp;},0);
+      toast('✓ '+batch.length+' días cargados — Meta total: '+totCheck.toLocaleString('es-AR')+' unidades');
+      PAGE='resumen';updNav();render();
+    }catch(ex){toast('Error: '+ex.message,'err');}
+    ldr(0);
+  };
+  reader.readAsArrayBuffer(f);
+}
+
 function renderPickResumen(){
   var days=Object.keys(DB.pick).filter(function(dk){return dk.indexOf(CUR)===0;}).sort(),sh=pickShift();
   var totI=sh.TM.items+sh.TT.items+sh.TN.items;
+  var totU=sh.TM.units+sh.TT.units+sh.TN.units;
   var totE=sh.TM.exc+sh.TT.exc+sh.TN.exc;
   var totD=sh.TM.dead+sh.TT.dead+sh.TN.dead,totP=sh.TM.prod+sh.TT.prod+sh.TN.prod;
   var pctG=totP+totD>0?Math.round(totD/(totP+totD)*100):0;
@@ -961,36 +1704,38 @@ function renderPickResumen(){
   var cards=mkStats([
     {l:'Días',v:days.length,s:fmtMonth(CUR)},
     {l:'Pickers únicos',v:allP.size},
-    {l:'Items totales',v:totI.toLocaleString('es-AR')},
+    {l:'Líneas totales',v:totI.toLocaleString('es-AR')},
+    {l:'Unidades totales',v:totU.toLocaleString('es-AR')},
     {l:'Excedente total',v:totE+' min',s:Math.round(totE/60*10)/10+' hs',cls:totE>0?'cbad':'cok'},
     {l:'% T.Muerto global',v:pctG+'%',cls:pctG>20?'cbad':pctG>10?'cwrn':'cok'},
-    {l:'TM Items/h',v:sh.TM.avg_iph,s:sh.TM.pickers+' pickers',cls:'ctm'},
-    {l:'TT Items/h',v:sh.TT.avg_iph,s:sh.TT.pickers+' pickers',cls:'ctt'},
-    {l:'TN Items/h',v:sh.TN.avg_iph,s:sh.TN.pickers+' pickers',cls:'ctn'}
+    {l:'TM Líneas/h',v:sh.TM.avg_iph,s:sh.TM.pickers+' pickers',cls:'ctm'},
+    {l:'TT Líneas/h',v:sh.TT.avg_iph,s:sh.TT.pickers+' pickers',cls:'ctt'},
+    {l:'TN Líneas/h',v:sh.TN.avg_iph,s:sh.TN.pickers+' pickers',cls:'ctn'}
   ]);
   var SHL=[{k:'TM',l:'Turno Mañana',cls:'tm'},{k:'TT',l:'Turno Tarde',cls:'tt'},{k:'TN',l:'Turno Noche',cls:'tn'}];
   var shRows=SHL.map(function(s){var r=sh[s.k];
-    if(!r.n)return '<tr><td class="tl"><span class="badge b'+s.cls+'">'+s.l+'</span></td><td colspan="6" style="color:var(--muted)">Sin datos</td></tr>';
-    return '<tr><td class="tl"><span class="badge b'+s.cls+'">'+s.l+'</span></td><td>'+r.pickers+'</td><td>'+r.items.toLocaleString('es-AR')+'</td><td>'+r.avg_iph+'</td>'+
+    if(!r.n)return '<tr><td class="tl"><span class="badge b'+s.cls+'">'+s.l+'</span></td><td colspan="7" style="color:var(--muted)">Sin datos</td></tr>';
+    return '<tr><td class="tl"><span class="badge b'+s.cls+'">'+s.l+'</span></td><td>'+r.pickers+'</td><td>'+r.items.toLocaleString('es-AR')+'</td><td>'+r.units.toLocaleString('es-AR')+'</td><td>'+r.avg_iph+'</td>'+
       '<td><strong style="color:'+(r.exc>0?'var(--red)':'var(--green)')+'">'+r.exc+' min</strong></td>'+
       '<td>'+Math.round(r.dead/60*10)/10+' hs</td><td>'+barEl(r.pct)+'</td></tr>';
   }).join('');
   var dayRows=days.map(function(dk){
-    var day=DB.pick[dk],ti=0,te=0,tp=0,td=0,pk=new Set();
-    ['TM','TT','TN'].forEach(function(s){(day[s]||[]).forEach(function(u){ti+=u.items;te+=u.exc;tp+=u.prod;td+=u.dead;pk.add(u.user);});});
+    var day=DB.pick[dk],ti=0,tu=0,te=0,tp=0,td=0,pk=new Set();
+    ['TM','TT','TN'].forEach(function(s){(day[s]||[]).forEach(function(u){ti+=u.items;tu+=(u.units||0);te+=u.exc;tp+=u.prod;td+=u.dead;pk.add(u.user);});});
     var pct=tp+td>0?Math.round(td/(tp+td)*100):0;
     var fp=dk.split('-'),lbl=(+fp[2])+'/'+fp[1];
     return '<tr><td class="tl"><strong>'+lbl+'</strong></td><td>'+pk.size+'</td>'+
       '<td><span class="badge btm">'+(day.TM||[]).length+'</span> <span class="badge btt">'+(day.TT||[]).length+'</span> <span class="badge btn2">'+(day.TN||[]).length+'</span></td>'+
       '<td>'+ti.toLocaleString('es-AR')+'</td>'+
+      '<td>'+tu.toLocaleString('es-AR')+'</td>'+
       '<td><strong style="color:'+(te>0?'var(--red)':'var(--green)')+'">'+te+' min</strong></td>'+
       '<td>'+barEl(pct)+'</td>'+
       '<td><button class="btn btn-o btn-xs" onclick="viewDay(\''+dk+'\')">Ver</button> '+
       '<button class="btn btn-r btn-xs" onclick="askDel(\''+dk+'\')">✕</button></td></tr>';
   }).join('');
-  document.getElementById('main').innerHTML=cards+
-    mkTable('Resumen por Turno','<tr><th>Turno</th><th>Pickers</th><th>Items</th><th>Prom i/h</th><th>Excedente</th><th>T.Muerto acum.</th><th>%</th></tr>',shRows)+
-    mkTable('Detalle por Día ('+days.length+')', '<tr><th>Fecha</th><th>Pickers</th><th>TM/TT/TN</th><th>Items</th><th>Excedente</th><th>% T.Muerto</th><th>Acciones</th></tr>',dayRows);
+  document.getElementById('main').innerHTML=renderPickMetaBlock()+cards+
+    mkTable('Resumen por Turno','<tr><th>Turno</th><th>Pickers</th><th>Líneas</th><th>Unidades</th><th>Prom l/h</th><th>Excedente</th><th>T.Muerto acum.</th><th>%</th></tr>',shRows)+
+    mkTable('Detalle por Día ('+days.length+')', '<tr><th>Fecha</th><th>Pickers</th><th>TM/TT/TN</th><th>Líneas</th><th>Unidades</th><th>Excedente</th><th>% T.Muerto</th><th>Acciones</th></tr>',dayRows);
 }
 function renderPickRanking(){
   var ranking=pickRanking();
@@ -1027,7 +1772,8 @@ function renderPickRanking(){
     var m=i===0?'🥇':i===1?'🥈':i===2?'🥉':(i+1)+'';
     var hsProd=Math.round(r.prod/60*10)/10;
     var hsDisp=Math.round(r.elapsed/60*10)/10;
-    return '<tr><td>'+m+'</td><td class="tl">'+r.user+'</td><td>'+r.days+'</td><td>'+r.items.toLocaleString('es-AR')+'</td>'+
+    return '<tr><td>'+m+'</td><td class="tl">'+dispName(r.user)+'</td><td>'+r.days+'</td><td>'+r.items.toLocaleString('es-AR')+'</td>'+
+      '<td>'+r.units.toLocaleString('es-AR')+'</td><td>'+r.bultos.toLocaleString('es-AR')+'</td>'+
       '<td>'+ciaBar(r.user)+'</td>'+
       '<td><strong>'+r.avg_iph+'</strong></td>'+
       '<td><strong style="color:'+(r.exc>0?'var(--red)':'var(--green)')+'">'+r.exc+' min</strong></td>'+
@@ -1035,26 +1781,27 @@ function renderPickRanking(){
   }).join('');
   var best=ranking.slice().sort(function(a,b){return b.avg_iph-a.avg_iph;}).map(function(r,i){
     var m=i===0?'🥇':i===1?'🥈':i===2?'🥉':(i+1)+'';
-    return '<tr><td>'+m+'</td><td class="tl">'+r.user+'</td><td>'+r.days+'</td><td>'+r.items.toLocaleString('es-AR')+'</td>'+
+    return '<tr><td>'+m+'</td><td class="tl">'+dispName(r.user)+'</td><td>'+r.days+'</td><td>'+r.items.toLocaleString('es-AR')+'</td>'+
+      '<td>'+r.units.toLocaleString('es-AR')+'</td><td>'+r.bultos.toLocaleString('es-AR')+'</td>'+
       '<td>'+ciaBar(r.user)+'</td>'+
       '<td><strong class="ok">'+r.avg_iph+'</strong></td><td>'+r.exc+' min</td><td>'+r.pct+'%</td></tr>';
   }).join('');
   document.getElementById('main').innerHTML=
     '<div class="sec-t">🔴 Mayor Tiempo Excedente</div>'+
-    mkTable('Ranking · '+fmtMonth(CUR),'<tr><th>#</th><th>Usuario</th><th>Días</th><th>Items</th><th>CIA Mix</th><th>Productividad</th><th>Excedente acum.</th><th>T.Muerto</th><th>%</th></tr>',worst)+
+    mkTable('Ranking · '+fmtMonth(CUR),'<tr><th>#</th><th>Usuario</th><th>Días</th><th>Líneas</th><th>Unidades</th><th>Bultos</th><th>CIA Mix</th><th>Productividad</th><th>Excedente acum.</th><th>T.Muerto</th><th>%</th></tr>',worst)+
     '<div class="sec-t">🟢 Mayor Productividad</div>'+
-    mkTable('Items/hora promedio','<tr><th>#</th><th>Usuario</th><th>Días</th><th>Items</th><th>CIA Mix</th><th>Productividad</th><th>Excedente acum.</th><th>%</th></tr>',best);
+    mkTable('Líneas/hora promedio','<tr><th>#</th><th>Usuario</th><th>Días</th><th>Líneas</th><th>Unidades</th><th>Bultos</th><th>CIA Mix</th><th>Productividad</th><th>Excedente acum.</th><th>%</th></tr>',best);
 }
 function renderPickDias(){
-  var days=Object.keys(DB.pick).filter(function(dk){return dk.indexOf(CUR)===0;}).sort();
+  var days=Object.keys(DB.pick).filter(function(dk){return dk.indexOf(CUR)===0;}).sort().reverse();
   var cards=days.map(function(dk){
     var day=DB.pick[dk],fp=dk.split('-'),lbl=(+fp[2])+'/'+fp[1]+'/'+fp[0];
-    var ti=0,te=0,iph_s=0,iph_n=0;['TM','TT','TN'].forEach(function(s){(day[s]||[]).forEach(function(u){ti+=u.items;te+=u.exc;iph_s+=u.iph;iph_n++;});});
+    var ti=0,tu=0,te=0,iph_s=0,iph_n=0;['TM','TT','TN'].forEach(function(s){(day[s]||[]).forEach(function(u){ti+=u.items;tu+=(u.units||0);te+=u.exc;iph_s+=u.iph;iph_n++;});});
     var avgIph=iph_n>0?Math.round(iph_s/iph_n*10)/10:0;
     return '<div class="day-card" onclick="viewDay(\''+dk+'\')">'+
-      '<div class="dc-h"><div><div class="dc-d">'+lbl+'</div><div class="dc-n">'+ti.toLocaleString('es-AR')+' items</div></div>'+
+      '<div class="dc-h"><div><div class="dc-d">'+lbl+'</div><div class="dc-n">'+ti.toLocaleString('es-AR')+' líneas · '+tu.toLocaleString('es-AR')+' unid.</div></div>'+
       '<div style="text-align:right"><span style="font-size:11px;color:'+(te>0?'var(--red)':'var(--green)')+'">'+te+' min exc</span><br><span style="font-size:12px;font-weight:700;color:var(--green)">'+avgIph+' l/h</span></div></div>'+
-      '<div class="dc-b">'+['TM','TT','TN'].map(function(s,i){var u=day[s]||[];return '<div class="dc-stat"><div class="dc-stat-l" style="color:var(--'+['tm','tt','tn'][i]+')">'+ s+'</div><div class="dc-stat-v">'+u.length+'</div></div>';}).join('')+'</div>'+
+      '<div class="dc-b">'+['TM','TT','TN'].map(function(s,i){var u=day[s]||[];var su=u.reduce(function(a,r){return a+(r.units||0);},0);return '<div class="dc-stat"><div class="dc-stat-l" style="color:var(--'+['tm','tt','tn'][i]+')">'+ s+'</div><div class="dc-stat-v">'+u.length+'</div><div style="font-size:9px;color:var(--muted2)">'+su.toLocaleString('es-AR')+' unid.</div></div>';}).join('')+'</div>'+
       '<div class="dc-f"><span>Ver →</span><button class="btn btn-r btn-xs" onclick="event.stopPropagation();askDel(\''+dk+'\')">✕</button></div></div>';
   }).join('');
   document.getElementById('main').innerHTML='<div class="day-grid">'+cards+'</div>';
@@ -1062,26 +1809,56 @@ function renderPickDias(){
 function renderPickDayDetail(dk){
   var day=DB.pick[dk],fp=dk.split('-'),dstr=(+fp[2])+'/'+fp[1]+'/'+fp[0];
   var back='<div style="margin-bottom:14px"><button class="btn btn-o btn-sm" onclick="SEL=null;render()">← Volver</button></div>';
-  var ti=0,te=0,td=0,tp=0,pk=new Set();
+  var ti=0,tu=0,te=0,td=0,tp=0,pk=new Set();
   var SHS=[{k:'TM',c:'tm',l:'Turno Mañana 06-14'},{k:'TT',c:'tt',l:'Turno Tarde 14-22'},{k:'TN',c:'tn',l:'Turno Noche 22-06'}];
-  SHS.forEach(function(s){(day[s.k]||[]).forEach(function(u){ti+=u.items;te+=u.exc;td+=u.dead;tp+=u.prod;pk.add(u.user);});});
+  SHS.forEach(function(s){(day[s.k]||[]).forEach(function(u){ti+=u.items;tu+=(u.units||0);te+=u.exc;td+=u.dead;tp+=u.prod;pk.add(u.user);});});
   var pct=tp+td>0?Math.round(td/(tp+td)*100):0;
   var html=back+'<div style="font-size:15px;font-weight:700;margin-bottom:14px">'+dstr+'</div>'+
-    mkStats([{l:'Pickers',v:pk.size},{l:'Items',v:ti.toLocaleString('es-AR')},
+    mkStats([{l:'Pickers',v:pk.size},{l:'Líneas',v:ti.toLocaleString('es-AR')},{l:'Unidades',v:tu.toLocaleString('es-AR')},
       {l:'Excedente',v:te+' min',cls:te>0?'cbad':'cok'},{l:'% T.Muerto',v:pct+'%',cls:pct>20?'cbad':pct>10?'cwrn':'cok'}]);
   SHS.forEach(function(s){
-    var u=day[s.k]||[];if(!u.length)return;
+    var uAll=day[s.k]||[];if(!uAll.length)return;
+    var shUnits=uAll.reduce(function(s2,r){return s2+(r.units||0);},0); // volumen: TODOS, blacklist incluida
+    var u=uAll.filter(function(r){return !inPickBlacklist(r.user);}); // medición individual: sin blacklist
+    if(!u.length)return; // si solo había gente de la blacklist, no hay tabla individual que mostrar
     var rows=u.map(function(r){
       var pd=r.prod+r.dead>0?r.dead/(r.prod+r.dead)*100:0;
-      var ciaCell=r.cia&&r.cia!=='—'?'<span style="font-size:10px;font-weight:700;padding:2px 6px;border-radius:4px;background:'+(r.cia==='FTW'?'#FF6B0025':r.cia==='APP'?'#3b82f625':'#a78bfa25')+';color:'+(r.cia==='FTW'?'var(--nike)':r.cia==='APP'?'#3b82f6':'#a78bfa')+'">'+r.cia+'</span>':'<span style="color:var(--muted2);font-size:11px">—</span>';
-      return '<tr><td class="tl">'+r.user+'</td><td>'+ciaCell+'</td><td>'+r.items+'</td><td>'+r.units+'</td>'+
+      var target=PICK_TARGET();
+      var pctMeta=target>0?Math.round(r.iph/target*100):0;
+      var pctColor=pctMeta>=90?'var(--green)':pctMeta>=70?'var(--yellow)':'var(--red)';
+      var barW=Math.min(100,pctMeta);
+      var metaCell='<div style="display:flex;align-items:center;gap:8px">'+
+        '<div style="flex:1;height:6px;background:var(--border);border-radius:3px;overflow:hidden;min-width:50px">'+
+        '<div style="width:'+barW+'%;height:100%;background:'+pctColor+';border-radius:3px"></div></div>'+
+        '<span style="font-weight:700;color:'+pctColor+';min-width:34px">'+pctMeta+'%</span>'+
+        '<span style="font-size:10px;color:var(--muted2)">/'+target+'</span></div>';
+      var ciaCell;
+      var cc=r.ciaCounts||{};
+      var ciaColor={FTW:'var(--nike)',APP:'#3b82f6',EQP:'#a78bfa'};
+      var ciaBg={FTW:'#FF6B0025',APP:'#3b82f625',EQP:'#a78bfa25'};
+      var activas=['FTW','APP','EQP'].filter(function(c){return cc[c]>0;});
+      if(activas.length>1){
+        // Pickeó más de una CIA: mostrar el reparto completo, no solo la dominante
+        ciaCell='<div style="display:flex;gap:4px;flex-wrap:wrap">'+activas.map(function(c){
+          return '<span style="font-size:9px;font-weight:700;padding:2px 5px;border-radius:4px;background:'+ciaBg[c]+';color:'+ciaColor[c]+'">'+c+' '+cc[c]+'</span>';
+        }).join('')+'</div>';
+      } else if(r.cia&&r.cia!=='—'){
+        ciaCell='<span style="font-size:10px;font-weight:700;padding:2px 6px;border-radius:4px;background:'+ciaBg[r.cia]+';color:'+ciaColor[r.cia]+'">'+r.cia+'</span>';
+      } else {
+        ciaCell='<span style="color:var(--muted2);font-size:11px">—</span>';
+      }
+      var extraMin=r.elapsedMin-480;
+      var extraBadge=extraMin>=60?' <span style="font-size:9px;font-weight:700;padding:1px 5px;border-radius:4px;background:#f59e0b25;color:var(--yellow)" title="Turno extendido: '+Math.floor(r.elapsedMin/60)+'h'+(r.elapsedMin%60)+'min en total">⏱ +'+Math.round(extraMin/60*10)/10+'h</span>':'';
+      return '<tr><td class="tl">'+dispName(r.user)+extraBadge+'</td><td>'+ciaCell+'</td><td>'+r.items+'</td><td>'+r.units+'</td>'+
         '<td>'+r.first+'</td><td>'+r.last+'</td><td>'+r.preGap+' min</td><td>'+r.inter+' min</td>'+
         '<td><strong>'+r.dead+' min</strong></td><td>'+xBdg(r.exc)+'</td><td>'+r.prod+' min</td>'+
-        '<td><strong>'+r.iph+'</strong></td><td>'+barEl(pd)+'</td></tr>';
+        '<td><strong>'+r.iph+'</strong></td><td>'+barEl(pd)+'</td><td>'+metaCell+'</td></tr>';
     }).join('');
     var avgIph=u.length>0?Math.round(u.reduce(function(s,r){return s+r.iph;},0)/u.length*10)/10:0;
-    html+=mkTable(s.l+' · '+u.length+' pickers · <span style="color:var(--green);font-weight:800">'+avgIph+' líneas/h</span>',
-      '<tr><th>Usuario</th><th>CIA</th><th>Items</th><th>Unid.</th><th>1er</th><th>Últ.</th><th>Gap Inicio</th><th>Breaks</th><th>T.Muerto</th><th>Excedente</th><th>T.Productivo</th><th>Items/h</th><th>%</th></tr>',rows);
+    var blOculta=uAll.length-u.length;
+    var blNota=blOculta>0?' <span style="color:var(--muted2);font-size:11px" title="Volumen incluido en el total, sin medir individualmente">(+'+blOculta+' sin medir)</span>':'';
+    html+=mkTable(s.l+' · '+u.length+' pickers'+blNota+' · <span style="color:var(--green);font-weight:800">'+avgIph+' líneas/h</span> · <span style="color:var(--muted2)">'+shUnits.toLocaleString('es-AR')+' unidades</span> · Meta: <span style="color:var(--nike);font-weight:800">'+PICK_TARGET()+' líneas/h</span>',
+      '<tr><th>Usuario</th><th>CIA</th><th>Líneas</th><th>Unid.</th><th>1er</th><th>Últ.</th><th>Gap Inicio</th><th>Breaks</th><th>T.Muerto</th><th>Excedente</th><th>T.Productivo</th><th>Líneas/h</th><th>% T.Muerto</th><th>% Meta</th></tr>',rows);
   });
   document.getElementById('main').innerHTML=html;
 }
@@ -1118,7 +1895,7 @@ function renderCamResumen(){
   }).length;
   var promDia=daysWithData>0?Math.round(filtU/daysWithData*10)/10:0;
   var out2=window.CAM_OUT||0;
-  var target=Math.round(out2*0.01);
+  var target=Math.round(out2*0.012);
   var calUdsKpi=0;if(DB.cal){Object.values(DB.cal).forEach(function(c){if(c.mes_key===CUR&&c.totales)calUdsKpi+=(c.totales.fisica||0);});}
   var reproUdsKpi=0;if(DB.repro){DB.repro.forEach(function(l){(l.avance||[]).forEach(function(a){var am=a.fecha?a.fecha.slice(0,7):null;if(am===CUR)reproUdsKpi+=a.unidades||0;});});}
   var totalCamaraKpi=filtU+(catFil==='TODAS'?calUdsKpi+reproUdsKpi:0);
@@ -1197,7 +1974,7 @@ function renderCamResumen(){
   html+='<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:16px;align-items:center">';
   html+='<div><div style="font-size:9px;font-weight:700;color:var(--muted2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">OUT DEL MES (ingreso manual)</div>';
   html+='<input type="number" id="camOut" value="'+(out2||'')+'" placeholder="ej: 380000" onchange="saveCamOut(+this.value)" style="width:100%;background:var(--panel2);border:1px solid var(--cam);color:var(--cam);border-radius:7px;padding:7px 10px;font-size:15px;font-weight:700;font-family:inherit"></div>';
-  html+='<div style="text-align:center"><div style="font-size:9px;font-weight:700;color:var(--muted2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">TARGET MÍNIMO (1%)</div>';
+  html+='<div style="text-align:center"><div style="font-size:9px;font-weight:700;color:var(--muted2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">TARGET MÍNIMO (1.2%)</div>';
   html+='<div style="font-size:22px;font-weight:800;color:var(--yellow)">'+target.toLocaleString('es-AR')+'</div>';
   if(out2>0)html+='<div style="font-size:10px;color:var(--muted);margin-top:2px">'+pctTarget+'% vs target</div>';
   html+='</div>';
@@ -1205,9 +1982,9 @@ function renderCamResumen(){
   html+='<div style="font-size:22px;font-weight:800;color:var(--cam)">'+totalCamaraKpi.toLocaleString('es-AR')+'</div>';
   html+='<div style="font-size:10px;color:var(--muted);margin-top:2px">'+filtT+' trámites</div></div>';
   html+='<div style="text-align:center"><div style="font-size:9px;font-weight:700;color:var(--muted2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">% AVANCE VS OUT</div>';
-  html+='<div style="font-size:22px;font-weight:800;color:'+(pctOut>=1?'var(--green)':pctOut>=0.75?'var(--yellow)':'var(--red)')+'">'+pctOut+'%</div></div>';
+  html+='<div style="font-size:22px;font-weight:800;color:'+(pctOut>=1.2?'var(--green)':pctOut>=0.9?'var(--yellow)':'var(--red)')+'">'+pctOut+'%</div></div>';
   html+='<div style="text-align:center"><div style="font-size:9px;font-weight:700;color:var(--muted2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">ESTADO</div>';
-  html+='<div style="font-size:16px;font-weight:800;color:'+(filtU>=target?'var(--green)':filtU>=target*0.75?'var(--yellow)':'var(--red)')+'">'+estado+'</div></div>';
+  html+='<div style="font-size:16px;font-weight:800;color:'+(filtU>=target?'var(--green)':filtU>=target*0.9?'var(--yellow)':'var(--red)')+'">'+estado+'</div></div>';
   html+='</div></div>';
 
   var dayRows=days.map(function(dk){
@@ -1223,7 +2000,7 @@ function renderCamResumen(){
   document.getElementById('main').innerHTML=html;
 }
 function renderCamDias(){
-  var days=Object.keys(DB.cam).filter(function(dk){return dk.indexOf(CUR)===0;}).sort();
+  var days=Object.keys(DB.cam).filter(function(dk){return dk.indexOf(CUR)===0;}).sort().reverse();
   var cards=days.map(function(dk){
     var d=DB.cam[dk],fp=dk.split('-'),lbl=(+fp[2])+'/'+fp[1]+'/'+fp[0];
     return '<div class="day-card" onclick="viewDay(\''+dk+'\')">'+
@@ -1368,7 +2145,7 @@ function renderHKResumen(){
   document.getElementById('main').innerHTML=html;
 }
 function renderHKDias(){
-  var days=Object.keys(DB.hk).filter(function(dk){return dk.indexOf(CUR)===0;}).sort(),target=HKT();
+  var days=Object.keys(DB.hk).filter(function(dk){return dk.indexOf(CUR)===0;}).sort().reverse(),target=HKT();
   var cards=days.map(function(dk){
     var d=DB.hk[dk],fp=dk.split('-'),lbl=(+fp[2])+'/'+fp[1]+'/'+fp[0];
     var prom=Math.round((d.promGlobal||0)*1000)/10;
@@ -1445,23 +2222,30 @@ function viewDay(dk){SEL=dk;PAGE='dias';updNav();render();}
 function exportExcel(){
   if(MOD==='ing'){toast('No disponible para Ingresos','err');return;}
   if(MOD==='ctl'){
-    var days=Object.keys(DB_CTL).sort();if(!days.length){toast('Sin datos','err');return;}
+    var days=Object.keys(DB_CTL).filter(function(dk){return dk.indexOf(CUR)===0;}).sort();if(!days.length){toast('Sin datos','err');return;}
     ldr(1,'Generando Excel...');
     setTimeout(function(){
-      var wb=XLSX.utils.book_new();
-      var rows=[['Fecha','Turno','Operario','CIA','Unidades','Bultos','1er Reg.','Último','B/hora','% Target']];
-      days.forEach(function(dk){
-        var fp=dk.split('-'),dlbl=(+fp[2])+'/'+fp[1];
-        ['TM','TT','TN'].forEach(function(sh){
-          (DB_CTL[dk][sh]||[]).forEach(function(u){
-            rows.push([dlbl,sh,u.user,u.cia,u.unidades||0,u.items,u.first,u.last,u.iph,u.pct+'%']);
+      try{
+        var wb=XLSX.utils.book_new();
+        var rows=[['Fecha','Turno','Operario','CIA','Unidades','Bultos','1er Reg.','Último','B/hora','% Target']];
+        days.forEach(function(dk){
+          var fp=dk.split('-'),dlbl=(+fp[2])+'/'+fp[1];
+          ['TM','TT','TN'].forEach(function(sh){
+            (DB_CTL[dk]&&DB_CTL[dk][sh]||[]).forEach(function(u){
+              if(!u)return; // fila vacia/corrupta: se salta en vez de tirar toda la exportacion
+              rows.push([dlbl,sh,u.user||'',u.cia||'',u.unidades||0,u.items||0,u.first||'',u.last||'',u.iph||0,(u.pct!=null?u.pct:'')+'%']);
+            });
           });
         });
-      });
-      var fp2=CUR.split('-');
-      XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(rows),'Mesa Control');
-      XLSX.writeFile(wb,'mesa_control_'+fp2[1]+'-'+fp2[0]+'.xlsx');
-      ldr(0);toast('Excel exportado');
+        var fp2=CUR.split('-');
+        XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(rows),'Mesa Control');
+        XLSX.writeFile(wb,'mesa_control_'+fp2[1]+'-'+fp2[0]+'.xlsx');
+        ldr(0);toast('Excel exportado');
+      }catch(e){
+        ldr(0);
+        toast('Error al exportar: '+e.message,'err');
+        console.error('exportExcel ctl error:',e);
+      }
     },50);
     return;
   }
@@ -1470,7 +2254,7 @@ function exportExcel(){
   setTimeout(function(){
     var wb=XLSX.utils.book_new();
     if(MOD==='pick'){
-      var H=['Usuario','Items','Unidades','1er Pick','Último Pick','Gap Inicio','Breaks','T.Muerto','Descanso OK','T.Excedente','T.Productivo','Items/h','% T.Muerto'];
+      var H=['Usuario','Líneas','Unidades','1er Pick','Último Pick','Gap Inicio','Breaks','T.Muerto','Descanso OK','T.Excedente','T.Productivo','Líneas/h','% T.Muerto'];
       [{k:'TM',l:'Turno Mañana'},{k:'TT',l:'Turno Tarde'},{k:'TN',l:'Turno Noche'}].forEach(function(sh){
         var rows=[['Fecha'].concat(H)];
         days.forEach(function(dk){var fp=dk.split('-'),dlbl=(+fp[2])+'/'+fp[1];
@@ -1478,7 +2262,7 @@ function exportExcel(){
             rows.push([dlbl,r.user,r.items,r.units,r.first,r.last,r.preGap,r.inter,r.dead,r.allowed,r.exc,r.prod,r.iph,pd+'%']);});});
         XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(rows),sh.l);
       });
-      var rRows=[['#','Usuario','Días','Items','Prom i/h','Excedente acum.','T.Muerto','% T.Muerto']];
+      var rRows=[['#','Usuario','Días','Líneas','Prom l/h','Excedente acum.','T.Muerto','% T.Muerto']];
       pickRanking().forEach(function(r,i){rRows.push([i+1,r.user,r.days,r.items,r.avg_iph,r.exc,r.dead,r.pct+'%']);});
       XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(rRows),'Ranking');
     }else if(MOD==='cam'){
@@ -1522,6 +2306,7 @@ function renderPickTendencias(){
   var dataProd={TM:[],TT:[],TN:[]};
   var dataMuerto={TM:[],TT:[],TN:[]};
   var dataCIA={FTW:[],APP:[],EQP:[]};
+  var ciaAgg={FTW:{sum:0,n:0},APP:{sum:0,n:0},EQP:{sum:0,n:0}};
   var TURNOS=['TM','TT','TN'];
 
   days.forEach(function(dk){
@@ -1531,8 +2316,11 @@ function renderPickTendencias(){
     TURNOS.forEach(function(sh){
       var users=day[sh]||[];
       if(!users.length){dataProd[sh].push(null);dataMuerto[sh].push(null);return;}
-      dataProd[sh].push(Math.round(users.reduce(function(s,u){return s+u.items;},0)/users.length));
+      dataProd[sh].push(Math.round(users.reduce(function(s,u){return s+u.iph;},0)/users.length*10)/10);
       dataMuerto[sh].push(Math.round(users.reduce(function(s,u){return s+u.exc;},0)/users.length));
+      users.forEach(function(u){
+        if(u.cia&&ciaAgg[u.cia]&&u.iph>0){ciaAgg[u.cia].sum+=u.iph;ciaAgg[u.cia].n++;}
+      });
     });
     // CIA breakdown
     var ciaTotals={FTW:0,APP:0,EQP:0};
@@ -1550,19 +2338,38 @@ function renderPickTendencias(){
       dataCIA[c].push(n>0?Math.round(ciaTotals[c]/n):null);
     });
   });
+  var ciaAvgIph={
+    FTW:ciaAgg.FTW.n>0?Math.round(ciaAgg.FTW.sum/ciaAgg.FTW.n*10)/10:0,
+    APP:ciaAgg.APP.n>0?Math.round(ciaAgg.APP.sum/ciaAgg.APP.n*10)/10:0,
+    EQP:ciaAgg.EQP.n>0?Math.round(ciaAgg.EQP.sum/ciaAgg.EQP.n*10)/10:0
+  };
 
   var html='<div style="padding:20px 0"><div style="display:grid;gap:16px">'+
+    // Productividad por Operario (con toggle Efectivos/Eventuales/Global)
+    '<div style="background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:20px">'+
+      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">'+
+        '<div style="font-size:13px;font-weight:700">Productividad por Operario</div>'+
+        '<button id="btnVistaOperario" class="btn btn-o btn-xs" onclick="cyclePickVistaOperario()">👥 Vista: Global (click para cambiar)</button>'+
+      '</div>'+
+      '<div style="font-size:11px;color:var(--muted2);margin-bottom:8px">Líneas/hora prom. del mes por operario · Objetivo: <span style="color:var(--green);font-weight:700">31 líneas/h</span></div>'+
+      '<canvas id="chartOperarios" height="90"></canvas></div>'+
     // Productividad por turno
     '<div style="background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:20px">'+
       '<div style="display:flex;justify-content:space-between;margin-bottom:4px">'+
         '<div style="font-size:13px;font-weight:700">Productividad por Turno</div>'+
-        '<div style="font-size:11px;color:var(--muted2)">Líneas prom/operario · Objetivo: <span style="color:var(--green);font-weight:700">200 líneas</span></div>'+
+        '<div style="font-size:11px;color:var(--muted2)">Líneas/hora prom. por operario · Objetivo: <span style="color:var(--green);font-weight:700">31 líneas/h</span></div>'+
       '</div><canvas id="chartProd" height="80"></canvas></div>'+
-    // Productividad por CIA
+    // Productividad por CIA - resumen en barras
     '<div style="background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:20px">'+
       '<div style="display:flex;justify-content:space-between;margin-bottom:4px">'+
-        '<div style="font-size:13px;font-weight:700">Productividad por CIA (BU)</div>'+
-        '<div style="font-size:11px;color:var(--muted2)">Líneas prom/operario por negocio</div>'+
+        '<div style="font-size:13px;font-weight:700">Productividad Promedio por CIA</div>'+
+        '<div style="font-size:11px;color:var(--muted2)">Líneas/hora prom. del mes · Objetivo: <span style="color:var(--green);font-weight:700">31 líneas/h</span></div>'+
+      '</div><canvas id="chartCIABar" height="70"></canvas></div>'+
+    // Productividad por CIA (tendencia)
+    '<div style="background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:20px">'+
+      '<div style="display:flex;justify-content:space-between;margin-bottom:4px">'+
+        '<div style="font-size:13px;font-weight:700">Productividad por CIA (BU) — Tendencia</div>'+
+        '<div style="font-size:11px;color:var(--muted2)">Líneas prom/operario por negocio, por día</div>'+
       '</div><canvas id="chartCIA" height="80"></canvas></div>'+
     // Tiempo muerto
     '<div style="background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:20px">'+
@@ -1579,13 +2386,25 @@ function renderPickTendencias(){
     scales:{x:{ticks:{color:'#64748b',font:{size:11}},grid:{color:'#1e2d45'}},
             y:{ticks:{color:'#64748b',font:{size:11}},grid:{color:'#1e2d45'},beginAtZero:true}}};
 
+  renderChartOperarios();
+
   // Chart 1: Productividad por turno
   new Chart(document.getElementById('chartProd'),{type:'line',data:{labels:labels,datasets:[
     {label:'Mañana',data:dataProd.TM,borderColor:'#E31E24',backgroundColor:'#E31E2415',borderWidth:2,pointRadius:4,tension:0.3,spanGaps:true},
     {label:'Tarde',data:dataProd.TT,borderColor:'#1A2B5E',backgroundColor:'#1A2B5E15',borderWidth:2,pointRadius:4,tension:0.3,spanGaps:true},
     {label:'Noche',data:dataProd.TN,borderColor:'#64748b',backgroundColor:'#64748b15',borderWidth:2,pointRadius:4,tension:0.3,spanGaps:true},
-    {label:'Objetivo (200)',data:labels.map(function(){return 200;}),borderColor:'rgba(34,197,94,0.6)',borderWidth:2,borderDash:[6,4],pointRadius:0,fill:false,tension:0}
+    {label:'Objetivo (31 líneas/h)',data:labels.map(function(){return PICK_TARGET();}),borderColor:'rgba(34,197,94,0.6)',borderWidth:2,borderDash:[6,4],pointRadius:0,fill:false,tension:0}
   ]},options:JSON.parse(JSON.stringify(baseOpts))});
+
+  // Chart 1b: Productividad promedio por CIA (barras)
+  new Chart(document.getElementById('chartCIABar'),{
+    type:'bar',
+    data:{labels:['FTW','APP','EQP'],datasets:[
+      {type:'bar',label:'Líneas/hora promedio',data:[ciaAvgIph.FTW,ciaAvgIph.APP,ciaAvgIph.EQP],backgroundColor:['#FF6B0080','#3b82f680','#a78bfa80'],borderColor:['#FF6B00','#3b82f6','#a78bfa'],borderWidth:2,borderRadius:6},
+      {type:'line',label:'Objetivo (31 líneas/h)',data:[PICK_TARGET(),PICK_TARGET(),PICK_TARGET()],borderColor:'rgba(34,197,94,0.8)',borderWidth:2,borderDash:[6,4],pointRadius:0,fill:false,tension:0}
+    ]},
+    options:JSON.parse(JSON.stringify(baseOpts))
+  });
 
   // Chart 2: Productividad por CIA
   new Chart(document.getElementById('chartCIA'),{type:'line',data:{labels:labels,datasets:[
@@ -1601,6 +2420,34 @@ function renderPickTendencias(){
     {label:'Noche',data:dataMuerto.TN,borderColor:'#64748b',backgroundColor:'#64748b15',borderWidth:2,pointRadius:4,tension:0.3,spanGaps:true},
     {label:'Tolerancia (20 min)',data:labels.map(function(){return 20;}),borderColor:'rgba(245,158,11,0.6)',borderWidth:2,borderDash:[6,4],pointRadius:0,fill:false,tension:0}
   ]},options:JSON.parse(JSON.stringify(baseOpts))});
+}
+
+function renderChartOperarios(){
+  var rank=pickRanking();
+  var filtered=rank.filter(function(r){
+    if(PICK_VISTA_OPERARIO==='efectivos')return esEfectivo(r.user);
+    if(PICK_VISTA_OPERARIO==='eventuales')return!esEfectivo(r.user);
+    return true;
+  }).sort(function(a,b){return b.avg_iph-a.avg_iph;});
+  var labels=filtered.map(function(r){
+    return dispName(r.user);
+  });
+  var data=filtered.map(function(r){return r.avg_iph;});
+  var btnLbl={efectivos:'Efectivos',eventuales:'Eventuales',global:'Global'}[PICK_VISTA_OPERARIO];
+  var btn=document.getElementById('btnVistaOperario');
+  if(btn)btn.textContent='👥 Vista: '+btnLbl+' (click para cambiar)';
+  var canvas=document.getElementById('chartOperarios');
+  if(!canvas)return;
+  if(window._chartOperarios){window._chartOperarios.destroy();}
+  window._chartOperarios=new Chart(canvas,{
+    data:{labels:labels,datasets:[
+      {type:'bar',label:'Líneas/hora promedio',data:data,backgroundColor:data.map(function(v){return v>=PICK_TARGET()?'#16A34A80':'#E31E2480';}),borderColor:data.map(function(v){return v>=PICK_TARGET()?'#16A34A':'#E31E24';}),borderWidth:2,borderRadius:4},
+      {type:'line',label:'Objetivo ('+PICK_TARGET()+' líneas/h)',data:labels.map(function(){return PICK_TARGET();}),borderColor:'rgba(34,197,94,0.6)',borderWidth:2,borderDash:[6,4],pointRadius:0,fill:false,tension:0}
+    ]},
+    options:{responsive:true,plugins:{legend:{labels:{color:'#94a3b8',font:{size:11}}},tooltip:{backgroundColor:'#1a2235',titleColor:'#e2e8f0',bodyColor:'#94a3b8',borderColor:'#1e2d45',borderWidth:1}},
+      scales:{x:{ticks:{color:'#64748b',font:{size:9},maxRotation:90,minRotation:60},grid:{display:false}},
+              y:{ticks:{color:'#64748b',font:{size:11}},grid:{color:'#1e2d45'},beginAtZero:true}}}
+  });
 }
 
 function baseDateCTL(dt){
@@ -1714,6 +2561,29 @@ async function loadSkuBu(){
   })();
 }
 
+async function loadPickerNames(){
+  PICKER_NAMES_PROMISE=(async function(){
+    try{
+      var r=await fetch(SB_URL+'/rest/v1/picker_names?select=usuario,nombre&limit=5000',{headers:SBH});
+      if(!r.ok)return;
+      var rows=await r.json();
+      rows.forEach(function(row){
+        if(row.nombre) PICKER_NAMES[String(row.usuario||'').toLowerCase().trim()]=row.nombre;
+      });
+      console.log('PICKER_NAMES cargado:',Object.keys(PICKER_NAMES).length,'registros');
+    }catch(e){console.error('loadPickerNames error:',e);}
+  })();
+}
+
+// Nombre a mostrar para un usuario: "Nombre (nikepick02)" si hay maestro cargado
+// para esa cuenta genérica, o el usuario tal cual si no hay nombre asignado todavía
+// (los efectivos, que ya usan su propio usuario con nombre, quedan igual).
+function dispName(user){
+  var key=String(user||'').toLowerCase().trim();
+  var nombre=PICKER_NAMES[key];
+  return nombre?(nombre+' ('+user+')'):user;
+}
+
 async function enrichSkuBu(skus){
   // Esperar que el lookup esté listo
   if(SKU_BU_PROMISE)await SKU_BU_PROMISE;
@@ -1814,8 +2684,22 @@ function processCtlRows(rows,fname){
       // Ordenar por items desc
       dayData[sh].sort(function(a,b){return b.items-a.items;});
     });
-    // Pisar siempre el día completo — no acumular
-    DB_CTL[dk]=dayData;
+    // Pisar por día+turno (no el día completo) — no acumular duplicados,
+    // pero sin borrar turnos de un día que este archivo no trae completos.
+    // Esto evita que la cola de un TN que cruza medianoche (madrugada del
+    // día siguiente, que baseDateCTL atribuye al día anterior) pise TM/TT
+    // ya cargados de ese día anterior con un archivo que sólo trae esa cola.
+    if(!DB_CTL[dk])DB_CTL[dk]={TM:[],TT:[],TN:[]};
+    ['TM','TT','TN'].forEach(function(sh){
+      var newTotal=dayData[sh].reduce(function(s,u){return s+(u.items||0);},0);
+      var oldTotal=(DB_CTL[dk][sh]||[]).reduce(function(s,u){return s+(u.items||0);},0);
+      // Sólo reemplazar el turno si el nuevo dato es igual o más completo
+      // que el que ya había (así una carga parcial/cola nunca degrada un
+      // turno ya cargado completo, pero una corrección real sí actualiza).
+      if(newTotal>=oldTotal){
+        DB_CTL[dk][sh]=dayData[sh];
+      }
+    });
   });
 
   // Guardar en Supabase por mes — solo los días nuevos, sbUpsertCtl mergea con Supabase
@@ -1838,7 +2722,7 @@ function processCtlRows(rows,fname){
 }
 
 function renderCtlResumen(){
-  var days=Object.keys(DB_CTL).sort().reverse();
+  var days=Object.keys(DB_CTL).filter(function(dk){return dk.indexOf(CUR)===0;}).sort().reverse();
   if(!days.length){
     document.getElementById('main').innerHTML=
       '<div class="upload-area"><div style="text-align:center">'+
@@ -1915,7 +2799,7 @@ function renderCtlDayDetail(dk){
       var pctColor=u.pct>=90?'var(--green)':u.pct>=70?'var(--yellow)':'var(--red)';
       var barW=Math.min(100,u.pct);
       html+='<tr style="border-bottom:1px solid #0d1a2a">'+
-        '<td style="padding:10px 14px;font-weight:600">'+u.user+'</td>'+
+        '<td style="padding:10px 14px;font-weight:600">'+dispName(u.user)+'</td>'+
         '<td style="padding:10px 14px;color:var(--muted2);font-size:12px">'+u.cia+'</td>'+
         '<td style="padding:10px 14px;color:var(--muted2);font-size:13px">'+(u.unidades||0).toLocaleString('es-AR')+'</td>'+
         '<td style="padding:10px 14px;font-weight:700;font-size:14px">'+u.items.toLocaleString('es-AR')+'</td>'+
@@ -1937,7 +2821,7 @@ function renderCtlDayDetail(dk){
 }
 
 function renderCtlTendencias(){
-  var days=Object.keys(DB_CTL).sort();
+  var days=Object.keys(DB_CTL).filter(function(dk){return dk.indexOf(CUR)===0;}).sort();
   if(!days.length){
     document.getElementById('main').innerHTML='<div style="padding:40px;color:var(--muted2);text-align:center">Sin datos cargados.</div>';
     return;
@@ -2041,7 +2925,14 @@ async function reproDelLote(id){
 }
 
 function renderReprocesos(){
-  var lotes=DB.repro||[];
+  var lotes=(DB.repro||[]).filter(function(l){
+    var procesado=(l.avance||[]).reduce(function(s,a){return s+(a.unidades||0);},0);
+    var pct=l.total>0?Math.min(100,Math.round(procesado/l.total*100)):0;
+    if(pct<100)return true; // activos: siempre visibles, sin importar el mes
+    var ult=(l.avance&&l.avance.length)?l.avance[l.avance.length-1].fecha:null;
+    if(!ult)return true; // cerrado sin fecha de avance registrada: no ocultar por las dudas
+    return ult.indexOf(CUR)===0; // cerrado: solo se muestra en el mes en que se cerró
+  });
   var today=new Date().toISOString().slice(0,10);
   var html='<div style="padding:20px 0">';
   html+='<div style="display:flex;justify-content:flex-end;margin-bottom:16px"><button class="btn btn-p" onclick="showNewLoteForm()">+ Nuevo lote</button></div>';
@@ -2130,15 +3021,15 @@ function submitAvance(loteId){
 
 function goPage(p){PAGE=p;SEL=null;updNav();render();}
 function updNav(){
-  var pages={pick:['resumen','ranking','dias','tendencias','config'],cam:['resumen','dias','cal','repro','calperf','config'],hk:['resumen','dias','config'],ing:['resumen','ing-dias'],ctl:['ctl-resumen','ctl-dias','ctl-tendencias','config']};
-  ['resumen','ranking','dias','tendencias','cal','repro','calperf','config','ing','ing-dias','ctl-resumen','ctl-dias','ctl-tendencias'].forEach(function(p){
+  var pages={pick:['resumen','ranking','dias','tendencias','config'],cam:['resumen','dias','cal','repro','calperf','config'],hk:['resumen','dias','config'],ing:['resumen','ing-dias'],ctl:['ctl-resumen','ctl-dias','ctl-tendencias','config'],tr:['tr-resumen']};
+  ['resumen','ranking','dias','tendencias','cal','repro','calperf','config','ing','ing-dias','ctl-resumen','ctl-dias','ctl-tendencias','tr-resumen'].forEach(function(p){
     var el=document.getElementById('nav-'+p);if(!el)return;
     el.style.display=(pages[MOD]||[]).indexOf(p)>=0?'flex':'none';
     el.classList.toggle('active',p===PAGE);
   });
 }
 function updateSB(){
-  if(MOD==='ing'){document.getElementById('sidebarDays').innerHTML='';return;}
+  if(MOD==='ing'||MOD==='tr'){document.getElementById('sidebarDays').innerHTML='';return;}
   var days=Object.keys(DB[MOD]||{}).sort().reverse().slice(0,10);
   document.getElementById('sidebarDays').innerHTML=days.map(function(dk){var fp=dk.split('-');
     return '<div style="cursor:pointer;padding:2px 0" onclick="viewDay(\''+dk+'\')"> '+(+fp[2])+'/'+fp[1]+'/'+fp[0]+'</div>';
@@ -2155,13 +3046,28 @@ async function updMS(){
 }
 async function changeMonth(){
   CUR=document.getElementById('hdrMonth').value;SEL=null;ldr(1,'Cargando...');
-  DB[MOD]=await sbGet(MOD,CUR);
-  if(MOD==='cam'){
-    DB.cal={};await calLoad(CUR);
-    try{var lsOut=localStorage.getItem('cam_out_'+CUR);if(lsOut)window.CAM_OUT=+lsOut;}catch(e){}
-    var savedOut=await sbGetOut(CUR);if(savedOut)window.CAM_OUT=savedOut;
+  try{
+    // Mesa de Control (ctl) no usa carga por mes: DB_CTL ya trae TODOS los
+    // meses cargados desde el init (sbLoadCtl), y las vistas de ctl filtran
+    // por CUR del lado del cliente. Pedirle un mes puntual acá con sbGet()
+    // apunta a una tabla/columna que no existe para 'ctl' y tira error —
+    // eso dejaba la pantalla colgada en "Cargando..." para siempre porque
+    // nunca llegaba a render()/ldr(0). Para ctl alcanza con re-renderizar.
+    if(MOD!=='ctl'){
+      DB[MOD]=await sbGet(MOD,CUR);
+    }
+    if(MOD==='cam'){
+      DB.cal={};await calLoad(CUR);
+      try{var lsOut=localStorage.getItem('cam_out_'+CUR);if(lsOut)window.CAM_OUT=+lsOut;}catch(e){}
+      var savedOut=await sbGetOut(CUR);if(savedOut)window.CAM_OUT=savedOut;
+    }
+    render();
+  }catch(e){
+    console.error('changeMonth error:',e);
+    toast('Error al cambiar de mes: '+(e&&e.message?e.message:e),'err');
+  }finally{
+    ldr(0);
   }
-  render();ldr(0);
 }
 function fmtMonth(mk){var p=mk.split('-');return['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'][+p[1]-1]+' '+p[0];}
 function fmtT(dt){return dt.toTimeString().slice(0,5);}
@@ -2178,17 +3084,21 @@ async function init(){
   try{
     await updMS();
     DB.pick=await sbGet('pick',CUR);
+    try{await loadPickMetas();}catch(e){console.log('loadPickMetas error:',e);}
+    try{await loadIngresosMetas();}catch(e){console.log('loadIngresosMetas error:',e);}
     try{var lsOut=localStorage.getItem('cam_out_'+CUR);if(lsOut)window.CAM_OUT=+lsOut;}catch(e){}
     sbGetOut(CUR).then(function(o){if(o){window.CAM_OUT=o;try{localStorage.setItem('cam_out_'+CUR,o);}catch(e){};}});
     try{await sbLoadCtl();}catch(e){console.log('sbLoadCtl error:',e);}
+    try{await sbLoadTr();}catch(e){console.log('sbLoadTr error:',e);}
     try{await reproLoad();}catch(e){console.log('reproLoad error:',e);}
     loadSkuBu();
+    loadPickerNames();
     // Deshabilitar botón hasta que maestro esté completo
     document.getElementById('btnLoad').disabled=true;
     document.getElementById('btnLoad').textContent='⏳ Cargando...';
     SKU_BU_PROMISE.then(function(){
       document.getElementById('btnLoad').disabled=false;
-      var labels={pick:'+ Cargar día',cam:'+ Cargar',hk:'+ Cargar auditoría',ing:'+ Cargar Excel',ctl:'+ Cargar Excel'};
+      var labels={pick:'+ Cargar día',cam:'+ Cargar',hk:'+ Cargar auditoría',ing:'+ Cargar Excel',ctl:'+ Cargar Excel',tr:'+ Cargar Excel'};
       document.getElementById('btnLoad').textContent=labels[MOD]||'+ Cargar';
     }).catch(function(){
       document.getElementById('btnLoad').disabled=false;
@@ -2225,17 +3135,12 @@ async function sbGetIngresos(filters){
 async function sbUpsertIngresos(rows){
   setSy(1);
   try{
-    // Step 1: delete existing rows with same delivery_keys
-    var keys=rows.map(function(r){return r.delivery_key;});
-    // Delete in chunks of 100
-    for(var i=0;i<keys.length;i+=100){
-      var chunk=keys.slice(i,i+100);
-      var inClause=chunk.map(function(k){return '"'+k+'"';}).join(',');
-      await fetch(SB_URL+'/rest/v1/ingresos_data?delivery_key=in.('+inClause+')',{
-        method:'DELETE',headers:SBH
-      });
-    }
-    // Step 2: insert all rows fresh
+    // Reemplazo total: el Excel representa el estado completo del año, no un incremental.
+    // Borrar todo antes de insertar evita que queden filas huérfanas de cargas anteriores
+    // (deliveries que ya no existen o cambiaron de número en versiones más nuevas del Excel).
+    await fetch(SB_URL+'/rest/v1/ingresos_data?delivery_key=neq.__NONE__',{
+      method:'DELETE',headers:SBH
+    });
     for(var j=0;j<rows.length;j+=500){
       var batch=rows.slice(j,j+500);
       var r=await fetch(SB_URL+'/rest/v1/ingresos_data',{
@@ -2252,13 +3157,28 @@ async function sbUpsertIngresos(rows){
 // ── Parse Excel — BU column ───────────────────────────────────────────────────
 function parseIngresosExcel(arrayBuffer){
   var wb=XLSX.read(arrayBuffer,{type:'array',cellDates:true});
-  var rows=[];
+  var grouped={};
   var sheets=['NACIONAL','IMPORTADO'];
+
+  function toISO(v){
+    if(!v)return null;
+    if(v instanceof Date){return !isNaN(v)?v.toISOString().slice(0,10):null;}
+    // Respaldo: si llegara como texto (ej. celda con formato texto en vez de fecha),
+    // interpretamos como DD/MM/YYYY (formato de la planilla), no MM/DD/YYYY.
+    var m=String(v).trim().match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
+    if(m){
+      var dd=+m[1],mm=+m[2],yy=+m[3];if(yy<100)yy+=2000;
+      var d=new Date(Date.UTC(yy,mm-1,dd));
+      return !isNaN(d)?d.toISOString().slice(0,10):null;
+    }
+    var d2=new Date(v);
+    return !isNaN(d2)?d2.toISOString().slice(0,10):null;
+  }
 
   sheets.forEach(function(sheetName){
     if(!wb.SheetNames.includes(sheetName))return;
     var ws=wb.Sheets[sheetName];
-    var data=XLSX.utils.sheet_to_json(ws,{defval:null,raw:false});
+    var data=XLSX.utils.sheet_to_json(ws,{defval:null,raw:true});
 
     data.forEach(function(row){
       var fechaStr=row['Fecha de llegada']||row['FECHA DE LLEGADA'];
@@ -2275,42 +3195,53 @@ function parseIngresosExcel(arrayBuffer){
       var cargadoInfor=row['Cargado\nA INFOR']||row['Cargado A INFOR']||'';
       var estado=row['Recibido / Pendiente']||row['RECIBIDO / PENDIENTE']||'';
       var obs=row['Observación']||row['Observacion']||'';
-      var material=row['Material']||row['MATERIAL']||'';
       var fechaGrStr=row['Fecha de GR']||row['FECHA DE GR'];
       var mes=parseInt(row['MES']||row['Mes']||0)||null;
 
       if(!delivery||!bu)return;
       if(!proveedor||proveedor==='Proveedor')return;
 
-      var fechaLlegada=null,fechaGr=null;
-      if(fechaStr){var d=new Date(fechaStr);if(!isNaN(d))fechaLlegada=d.toISOString().slice(0,10);}
-      if(fechaGrStr){var d2=new Date(fechaGrStr);if(!isNaN(d2))fechaGr=d2.toISOString().slice(0,10);}
+      var fechaLlegada=toISO(fechaStr);
+      var fechaGr=toISO(fechaGrStr);
       if(!mes&&fechaLlegada){mes=parseInt(fechaLlegada.split('-')[1]);}
 
       var deliveryKey=String(delivery)+'_'+String(bu);
 
-      rows.push({
-        delivery_key:deliveryKey,
-        fecha_llegada:fechaLlegada,
-        origen:String(origen).trim(),
-        proveedor:String(proveedor).trim(),
-        nro_despacho:String(despacho).trim(),
-        embarque:String(embarque).trim(),
-        nro_delivery:parseInt(delivery)||null,
-        bu:String(bu).trim(),
-        bultos:bultos,
-        unidades:unidades,
-        fisico:fisico,
-        cargado_infor:String(cargadoInfor).trim(),
-        estado:String(estado).trim(),
-        observacion:String(obs).trim(),
-        fecha_gr:fechaGr,
-        mes:mes,
-        updated_at:new Date().toISOString()
-      });
+      // Un Delivery+BU puede tener varias líneas de material: se agrupan en un solo
+      // registro (así lo exige la tabla), sumando bultos/unidades/físico de cada línea.
+      if(!grouped[deliveryKey]){
+        grouped[deliveryKey]={
+          delivery_key:deliveryKey,
+          fecha_llegada:fechaLlegada,
+          origen:String(origen).trim(),
+          proveedor:String(proveedor).trim(),
+          nro_despacho:String(despacho).trim(),
+          embarque:String(embarque).trim(),
+          nro_delivery:parseInt(delivery)||null,
+          bu:String(bu).trim(),
+          bultos:0,
+          unidades:0,
+          fisico:0,
+          cargado_infor:String(cargadoInfor).trim(),
+          estado:String(estado).trim(),
+          observacion:String(obs).trim(),
+          fecha_gr:fechaGr,
+          mes:mes,
+          updated_at:new Date().toISOString()
+        };
+      }
+      var g=grouped[deliveryKey];
+      g.bultos+=bultos;
+      g.unidades+=unidades;
+      g.fisico+=fisico;
+      // Si esta línea trae fecha y el registro agrupado todavía no tiene, la tomamos.
+      if(!g.fecha_llegada&&fechaLlegada)g.fecha_llegada=fechaLlegada;
+      if(!g.fecha_gr&&fechaGr)g.fecha_gr=fechaGr;
+      // "Pendiente" en cualquier línea marca todo el delivery como pendiente.
+      if(String(estado).trim().toUpperCase().indexOf('PEND')>=0)g.estado=String(estado).trim();
     });
   });
-  return rows;
+  return Object.values(grouped);
 }
 
 // ── Load flow ─────────────────────────────────────────────────────────────────
@@ -2437,6 +3368,9 @@ function buildIngresosView(){
   html+='<select onchange="window.ING_FILTERS.estado=this.value;buildIngresosView()" style="background:var(--panel2);border:1px solid var(--border);color:var(--text);border-radius:7px;padding:5px 9px;font-size:12px;font-family:inherit">';
   ['TODOS','R','P'].forEach(function(e){html+='<option value="'+e+'"'+(F.estado===e?' selected':'')+'>'+{'TODOS':'Todos','R':'Recibidos','P':'Pendientes'}[e]+'</option>';});
   html+='</select></div></div>';
+
+  // ── META DE INBOUND (siempre referida al mes activo del dashboard, CUR) ──
+  html+=renderIngresosMetaBlock();
 
   // ── KPI CARDS ──
   html+=mkStats([
@@ -2657,8 +3591,8 @@ function ingParseExcel(buf){
   });
 }
 
-// ── Load flow ─────────────────────────────────────────────────────────────────
-function showIngresosLoad(){
+// ── Load flow (vieja, deshabilitada — pisaba a la función correcta de más arriba) ──
+function showIngresosLoad_OLD_DISABLED(){
   document.getElementById('main').innerHTML=
     '<div class="upload-area">'+
     '<div class="drop-box" id="ingDrop" '+
@@ -3570,12 +4504,14 @@ async function renderCalPerf(){
 
 
 function ingSelFechaClick(idx){window.ING_SEL_FECHA=window._ing_f[idx];renderIngresosDias();}
-function ingVolverResumen(){PAGE='resumen';updNav();renderIngResumen();}
+function ingVolverResumen(){PAGE='resumen';updNav();renderIngresosResumen();}
 function renderIngresosDias(){
   var all=window.ING_DATA||[];
   var F=window.ING_F;
+  var FM=window.ING_FILTERS; // mismo filtro de MES que usa la pantalla de Resumen — antes esta pantalla no lo miraba para nada, por eso mostraba todos los meses juntos
   var selFecha=window.ING_SEL_FECHA||null;
   var filtered=all.filter(function(r){
+    if(FM.mes&&FM.mes!=='TODOS'&&r.mes!=FM.mes)return false;
     if(F.origen!=='TODOS'&&r.origen!==F.origen)return false;
     if(F.bu!=='TODOS'&&r.bu!==F.bu)return false;
     if(F.estado!=='TODOS'&&r.estado!==F.estado)return false;
@@ -3591,7 +4527,11 @@ function renderIngresosDias(){
     if(r.origen==='NACIONAL')byF[f].n+=r.unidades||0;else byF[f].i+=r.unidades||0;
     byF[f].rows.push(r);
   });
-  var dias=Object.values(byF).sort(function(a,b){return b.f.localeCompare(a.f);});
+  var dias=Object.values(byF).sort(function(a,b){
+    if(a.f==='Sin fecha')return 1;
+    if(b.f==='Sin fecha')return -1;
+    return b.f.localeCompare(a.f);
+  });
   window._ing_f=dias.map(function(d){return d.f;});
   var html='<div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;align-items:center">';
   function fsel(lbl,key,opts,lmap){
@@ -3599,6 +4539,12 @@ function renderIngresosDias(){
     opts.forEach(function(o){s+='<option value="'+o+'"'+(F[key]==o?' selected':'')+'>'+( lmap&&lmap[o]||o)+'</option>';});
     return s+'</select></div>';
   }
+  (function(){
+    var mesOpts=[['TODOS','Todos'],[1,'Enero'],[2,'Febrero'],[3,'Marzo'],[4,'Abril'],[5,'Mayo'],[6,'Junio'],[7,'Julio'],[8,'Agosto'],[9,'Septiembre'],[10,'Octubre'],[11,'Noviembre'],[12,'Diciembre']];
+    html+='<div style="display:flex;align-items:center;gap:5px"><span style="font-size:10px;color:var(--muted2);font-weight:700;text-transform:uppercase">MES</span><select onchange="window.ING_FILTERS.mes=this.value===\'TODOS\'?\'TODOS\':+this.value;window.ING_SEL_FECHA=null;renderIngresosDias()" style="background:var(--panel2);border:1px solid var(--border);color:var(--text);border-radius:7px;padding:4px 8px;font-size:11px;font-family:inherit">';
+    mesOpts.forEach(function(o){html+='<option value="'+o[0]+'"'+(FM.mes==o[0]?' selected':'')+'>'+o[1]+'</option>';});
+    html+='</select></div>';
+  })();
   html+=fsel('ORIGEN','origen',['TODOS','NACIONAL','IMPORTADO'],{TODOS:'Todos'});
   html+=fsel('GPC / BU','bu',['TODOS','FTW','APP','EQP'],{TODOS:'Todos'});
   html+=fsel('ESTADO','estado',['TODOS','R','P'],{TODOS:'Todos',R:'Recibidos',P:'Pendientes'});
@@ -3625,24 +4571,469 @@ function renderIngresosDias(){
           '<td>'+(r.estado==='P'?'<span class="badge bbad">PEND</span>':'<span class="badge bok">OK</span>')+'</td></tr>';
       }).join(''));
   }
-  html+=mkTable('Ingresos por fecha (clic para ver detalle)',
-    '<tr><th>Fecha</th><th>Deliveries</th><th>Nacional</th><th>Importado</th><th>Total Uds</th><th>Bultos</th><th>Pendiente</th><th></th></tr>',
-    dias.map(function(d,i){
-      var fp=d.f==='Sin fecha'?d.f:d.f.slice(8)+'/'+d.f.slice(5,7)+'/'+d.f.slice(0,4);
-      var isSel=(d.f===selFecha);
-      var bg=isSel?'background:rgba(59,130,246,.08);':'';
-      return '<tr style="cursor:pointer;'+bg+'" onclick="ingSelFechaClick('+i+')">'+
-        '<td class="tl"><strong style="color:var(--accent)">'+fp+'</strong></td>'+
-        '<td>'+d.d.size+'</td>'+
-        '<td>'+(d.n>0?'<span class="badge btm">'+d.n.toLocaleString('es-AR')+'</span>':'&#8212;')+'</td>'+
-        '<td>'+(d.i>0?'<span class="badge bcam">'+d.i.toLocaleString('es-AR')+'</span>':'&#8212;')+'</td>'+
-        '<td><strong>'+d.u.toLocaleString('es-AR')+'</strong></td>'+
-        '<td>'+d.b.toLocaleString('es-AR')+'</td>'+
-        '<td>'+(d.p>0?'<span class="badge bbad">'+d.p.toLocaleString('es-AR')+'</span>':'<span class="badge bok">OK</span>')+'</td>'+
-        '<td style="font-size:12px;color:var(--accent)">'+(isSel?'&#9660;':'&#8250;')+'</td></tr>';
-    }).join(''));
+  var cardsHtml=dias.map(function(d,i){
+    var fp=d.f==='Sin fecha'?d.f:d.f.slice(8)+'/'+d.f.slice(5,7)+'/'+d.f.slice(0,4);
+    var isSel=(d.f===selFecha);
+    var pctPend=d.u>0?Math.round(d.p/d.u*100):0;
+    var color=d.p===0?'var(--green)':pctPend>20?'var(--red)':'var(--yellow)';
+    return '<div class="day-card" style="'+(isSel?'border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)':'')+'" onclick="ingSelFechaClick('+i+')">'+
+      '<div class="dc-h"><div><div class="dc-d">'+fp+'</div><div class="dc-n">'+d.u.toLocaleString('es-AR')+' unidades</div></div>'+
+      '<div style="text-align:right"><span style="font-size:12px;font-weight:700;color:'+color+'">'+(d.p>0?d.p.toLocaleString('es-AR')+' pend.':'OK')+'</span></div></div>'+
+      '<div class="dc-b">'+
+        '<div class="dc-stat"><div class="dc-stat-l">Deliv.</div><div class="dc-stat-v">'+d.d.size+'</div></div>'+
+        '<div class="dc-stat"><div class="dc-stat-l">Nacional</div><div class="dc-stat-v">'+(d.n>0?d.n.toLocaleString('es-AR'):'—')+'</div></div>'+
+        '<div class="dc-stat"><div class="dc-stat-l">Import.</div><div class="dc-stat-v">'+(d.i>0?d.i.toLocaleString('es-AR'):'—')+'</div></div>'+
+      '</div>'+
+      '<div class="dc-f"><span>'+(isSel?'▾ Viendo detalle':'Ver detalle →')+'</span></div></div>';
+  }).join('');
+  html+='<div style="padding:4px 0 20px"><div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px">'+cardsHtml+'</div></div>';
   document.getElementById('main').innerHTML=html;
 }
+
+// ══ TRANSMISIONES MODULE (Back Order / Drop Size / Quiebre) ═════════════════
+// Fuente: export de pedidos del BI del cliente (mismas columnas que
+// "pedidos envio cliente.xlsx"). Es una FOTO del estado actual de todos los
+// pedidos — cada carga nueva reemplaza la foto completa (no se acumula por
+// día, a diferencia de Mesa de Control), porque el archivo trae siempre el
+// estado vigente de cada pedido, no un incremental.
+//
+// Clasificación de Back Order — corregida con Gus el 29/09/2026: la primera
+// versión (22/09) replicaba todos los estados tildados en su tabla dinámica,
+// pero eso mezclaba "no liberado" con "ya en preparación". Definición real:
+// Back Order = SOLO lo que el cliente transmitió y todavía no se sacó a
+// preparar. Apenas se libera a piso (Asignado, Lanzado, En preparación,
+// Parcialmente preparado, Preparado al completo, Pieza lanzada, No se
+// asignó) ya dejó de ser back order — es cola de trabajo interna, no espera
+// del cliente. Ese segundo grupo se muestra aparte como "En preparación".
+//  - Creado externamente → responsabilidad CLIENTE (BO real)
+//  - Asignado / Lanzado / En preparación / Parcialmente preparado → cola de PICKING (nuestra)
+//  - Preparado al completo → cola de DESPACHO (terminado de armar, no de picking)
+//  - Pieza lanzada / No se asignó → casos a revisar (volumen bajo, excepción)
+// "En zona de espera" y "Expedido completo" NO son back order ni "en
+// preparación": son pedidos ya terminados (en el dock esperando despacho, o
+// ya expedidos).
+
+var TR_BO_ESTADOS=['Creado externamente'];
+var TR_PREP_ESTADOS=['Asignado','En preparación','Lanzado','Parcialmente preparado','Preparado al completo','Pieza lanzada','No se asignó'];
+// Quiebre de stock (faltante definitivo) solo existe en un pedido CERRADO —
+// mientras está en BO, Cant. Confirmada todavía no es definitiva (puede
+// terminar de armarse completo). Confirmado con Gus 28/09/2026: "cerrado"
+// = En zona de espera (ya armado, esperando despacho) o Expedido completo
+// (ya se fue). Antes se sumaba Cant.Pedida-Cant.Confirmada de TODAS las
+// filas del Excel (incluyendo BO en curso, y sin filtrar por mes) — daba
+// 22k contra un real de ~2k/mes.
+var TR_CERRADO_ESTADOS=['En zona de espera','Expedido completo'];
+var TR_RESP={
+  'Creado externamente':'cliente',
+  'Asignado':'picking','Lanzado':'picking','En preparación':'picking','Parcialmente preparado':'picking',
+  'Preparado al completo':'despacho',
+  'Pieza lanzada':'revisar','No se asignó':'revisar'
+};
+var TR_RESP_LABEL={cliente:'Cliente — sin liberar',picking:'Cola de picking',despacho:'Cola de despacho',revisar:'Revisar'};
+var TR_RESP_COLOR={cliente:'var(--red)',picking:'var(--yellow)',despacho:'var(--accent)',revisar:'var(--muted2)'};
+
+// ── Supabase: foto única (id='current') ──────────────────────────────────────
+async function sbLoadTr(){
+  try{
+    var r=await fetch(SB_URL+'/rest/v1/transmisiones_data?id=eq.current&select=data',{headers:SBH});
+    if(!r.ok)return;
+    var rows=await r.json();
+    if(rows.length&&rows[0].data){
+      var d=rows[0].data;
+      DB_TR.rows=d.rows||[];
+      DB_TR.asOf=d.asOf||null;
+      DB_TR.meli=d.meli||{};
+      if(d.dropMarco)DB_TR.dropMarco=d.dropMarco;
+    }
+  }catch(e){console.log('sbLoadTr error:',e);}
+}
+async function sbSaveTr(){
+  setSy(1);
+  try{
+    var payload={rows:DB_TR.rows,asOf:DB_TR.asOf,meli:DB_TR.meli||{},dropMarco:DB_TR.dropMarco};
+    var existing=await fetch(SB_URL+'/rest/v1/transmisiones_data?id=eq.current&select=id',{headers:SBH});
+    var exRows=await existing.json();
+    var method=exRows.length?'PATCH':'POST';
+    var url=SB_URL+'/rest/v1/transmisiones_data'+(method==='PATCH'?'?id=eq.current':'');
+    var body=method==='PATCH'?{data:payload}:{id:'current',data:payload};
+    var r=await fetch(url,{method:method,headers:Object.assign({},SBH,{'Prefer':'return=minimal'}),body:JSON.stringify(body)});
+    setSy(0,'ok');return r.ok;
+  }catch(e){setSy(0,'er');return false;}
+}
+
+// ── Parse Excel ───────────────────────────────────────────────────────────────
+function parseTrExcel(arrayBuffer){
+  var wb=XLSX.read(arrayBuffer,{type:'array',cellDates:true});
+  var sheetName=wb.SheetNames.indexOf('Export')>=0?'Export':wb.SheetNames[0];
+  var ws=wb.Sheets[sheetName];
+  var data=XLSX.utils.sheet_to_json(ws,{defval:null,raw:true});
+  function toISO(v){
+    if(v===null||v===undefined||v==='')return null;
+    if(v instanceof Date)return !isNaN(v)?v.toISOString().slice(0,10):null;
+    // Serial de fecha de Excel (días desde 1899-12-30). Este export del BI
+    // trae "Fecha Agregado" como número crudo, no como celda tipo fecha —
+    // SheetJS no lo detecta como fecha aunque se pase cellDates:true, así
+    // que hay que convertirlo a mano. Antes esto caía en new Date(v) tratando
+    // el serial como milisegundos desde 1970, dando siempre 1/1/1970.
+    if(typeof v==='number'){
+      var utcDays=Math.floor(v-25569);
+      var dNum=new Date(utcDays*86400*1000);
+      return !isNaN(dNum)?dNum.toISOString().slice(0,10):null;
+    }
+    var m=String(v).trim().match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
+    if(m){var dd=+m[1],mm=+m[2],yy=+m[3];if(yy<100)yy+=2000;var d=new Date(Date.UTC(yy,mm-1,dd));return !isNaN(d)?d.toISOString().slice(0,10):null;}
+    var m2=String(v).trim().match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+    if(m2){var d3=new Date(Date.UTC(+m2[1],+m2[2]-1,+m2[3]));return !isNaN(d3)?d3.toISOString().slice(0,10):null;}
+    var d2=new Date(v);return !isNaN(d2)?d2.toISOString().slice(0,10):null;
+  }
+  var rows=[];
+  data.forEach(function(r){
+    var pedido=r['Pedido'];
+    if(!pedido)return;
+    var estado=String(r['Estado']||'').trim();
+    var bu=String(r['Tipo Origen']||r['BU']||'').trim().toUpperCase();
+    var lineas=parseFloat(r['# Líneas']||r['# Lineas']||0)||0;
+    var cantPedida=parseFloat(r['Cant. Pedida']||0)||0;
+    var cantConfirmada=parseFloat(r['Cant. Confirmada']||0)||0;
+    var bultos=parseFloat(r['Bultos']||0)||0;
+    var fechaAgregado=toISO(r['Fecha Agregado']);
+    if(!estado||!bu||!fechaAgregado)return;
+    var cliente=String(r['Cliente Destino']||'').trim();
+    var fechaJalado=toISO(r['Fecha Jalado']); // 'No Jalado' => null
+    rows.push({pedido:String(pedido),estado:estado,bu:bu,lineas:lineas,cantPedida:cantPedida,cantConfirmada:cantConfirmada,bultos:bultos,fechaAgregado:fechaAgregado,cliente:cliente,fechaJalado:fechaJalado});
+  });
+  return rows;
+}
+
+// ── Carga ──────────────────────────────────────────────────────────────────────
+function showTrLoad(){
+  document.getElementById('main').innerHTML=
+    '<div class="upload-area">'+
+    '<div class="drop-box" id="dropTrBox" ondragover="event.preventDefault();this.classList.add(\'drag\')" ondragleave="this.classList.remove(\'drag\')" ondrop="onDropTr(event)">'+
+    '<div class="drop-icon">📦</div>'+
+    '<div class="drop-t">Importar export de Pedidos (BI cliente)</div>'+
+    '<div class="drop-s">Reemplaza la foto completa por la del archivo nuevo<br>Columnas esperadas: Pedido, Estado, Tipo Origen, # Líneas, Cant. Pedida, Cant. Confirmada, Fecha Agregado</div><br>'+
+    '<button class="btn btn-p" onclick="document.getElementById(\'fiTr\').click()">Seleccionar archivo</button>'+
+    '<input type="file" id="fiTr" accept=".xlsx,.xls" onchange="readTrFile(this.files[0])" style="display:none">'+
+    '</div></div>';
+}
+function onDropTr(e){
+  e.preventDefault();
+  var db=document.getElementById('dropTrBox');if(db)db.classList.remove('drag');
+  if(e.dataTransfer.files[0])readTrFile(e.dataTransfer.files[0]);
+}
+function readTrFile(f){
+  if(!f)return;
+  ldr(1,'Leyendo archivo...');
+  var r=new FileReader();
+  r.onload=function(e){
+    try{
+      var rows=parseTrExcel(e.target.result);
+      if(!rows.length){toast('No se encontraron pedidos válidos','err');ldr(0);return;}
+      DB_TR.rows=rows;
+      trMergeMeli(rows);
+      DB_TR.asOf=new Date().toISOString();
+      ldr(1,'Guardando '+rows.length+' pedidos...');
+      sbSaveTr().then(function(ok){
+        toast(ok?('✓ '+rows.length+' pedidos guardados'):'✓ Cargado (error al guardar en DB)',ok?'ok':'err');
+        PAGE='tr-resumen';updNav();renderTrResumen();ldr(0);
+      });
+    }catch(ex){toast('Error: '+ex.message,'err');ldr(0);}
+  };
+  r.readAsArrayBuffer(f);
+}
+
+function trBO(rows){return rows.filter(function(r){return TR_BO_ESTADOS.indexOf(r.estado)>=0;});}
+function trPrep(rows){return rows.filter(function(r){return TR_PREP_ESTADOS.indexOf(r.estado)>=0;});}
+function trByEstadoTable(subset){
+  var byEstado={};
+  subset.forEach(function(r){
+    if(!byEstado[r.estado])byEstado[r.estado]={pedida:0,pedidos:0,byBU:{}};
+    byEstado[r.estado].pedida+=r.cantPedida;
+    byEstado[r.estado].pedidos++;
+    byEstado[r.estado].byBU[r.bu]=(byEstado[r.estado].byBU[r.bu]||0)+r.cantPedida;
+  });
+  var estadosOrdenados=Object.keys(byEstado).sort(function(a,b){return byEstado[b].pedida-byEstado[a].pedida;});
+  return estadosOrdenados.map(function(es){
+    var d=byEstado[es];
+    var resp=TR_RESP[es]||'revisar';
+    return '<tr style="border-bottom:1px solid #0d1a2a">'+
+      '<td style="padding:10px 14px;font-weight:600">'+es+'</td>'+
+      '<td style="padding:10px 14px"><span style="font-size:11px;font-weight:700;color:'+TR_RESP_COLOR[resp]+'">'+TR_RESP_LABEL[resp]+'</span></td>'+
+      '<td style="padding:10px 14px;color:var(--muted2)">'+d.pedidos+'</td>'+
+      '<td style="padding:10px 14px;color:var(--muted2)">'+(d.byBU.FTW||0).toLocaleString('es-AR')+'</td>'+
+      '<td style="padding:10px 14px;color:var(--muted2)">'+(d.byBU.APP||0).toLocaleString('es-AR')+'</td>'+
+      '<td style="padding:10px 14px;color:var(--muted2)">'+(d.byBU.EQP||0).toLocaleString('es-AR')+'</td>'+
+      '<td style="padding:10px 14px;font-weight:700">'+d.pedida.toLocaleString('es-AR')+'</td>'+
+    '</tr>';
+  }).join('');
+}
+function trEstadoTableHead(){
+  return '<table style="width:100%;border-collapse:collapse">'+
+    '<thead><tr>'+
+      ['Estado','Responsabilidad','Pedidos','FTW','APP','EQP','Total unid.'].map(function(h){
+        return '<th style="padding:8px 14px;text-align:left;font-size:10px;color:var(--muted2);text-transform:uppercase;border-bottom:1px solid var(--border)">'+h+'</th>';
+      }).join('')+
+    '</tr></thead><tbody>';
+}
+
+// ── Render ───────────────────────────────────────────────────────────────────
+function renderTrResumen(){
+  if(!DB_TR.rows.length){
+    document.getElementById('main').innerHTML=
+      '<div class="upload-area"><div style="text-align:center">'+
+      '<div style="font-size:44px;margin-bottom:14px">📦</div>'+
+      '<div style="font-size:15px;font-weight:700;margin-bottom:8px">Sin datos de Transmisiones</div>'+
+      '<div style="color:var(--muted2);font-size:12px;margin-bottom:18px">Subí el export de pedidos del BI con + Cargar Excel</div>'+
+      '<button class="btn btn-p" onclick="doLoad()">+ Cargar Excel</button></div></div>';
+    return;
+  }
+  var rows=DB_TR.rows;
+  var bo=trBO(rows);
+  var totBO=bo.reduce(function(s,r){return s+r.cantPedida;},0);
+  var totTransmision=rows.reduce(function(s,r){return s+r.cantPedida;},0);
+  var quiebreRows=rows.filter(function(r){return TR_CERRADO_ESTADOS.indexOf(r.estado)>=0&&r.fechaAgregado.indexOf(CUR)===0;});
+  var totQuiebre=quiebreRows.reduce(function(s,r){return s+Math.max(0,r.cantPedida-r.cantConfirmada);},0);
+
+  // Drop Size: solo pedidos que ya se sacaron a preparar (ni BO sin liberar,
+  // ni ya cerrados) — confirmado con Gus 29/09/2026, misma fórmula que ya
+  // usábamos (unidades totales / líneas totales), pero antes tomaba TODO el
+  // snapshot en vez de este subconjunto.
+  var prep=trPrep(rows);
+  var byBU={FTW:{pedida:0,lineas:0}, APP:{pedida:0,lineas:0}, EQP:{pedida:0,lineas:0}};
+  prep.forEach(function(r){
+    if(!byBU[r.bu])byBU[r.bu]={pedida:0,lineas:0};
+    byBU[r.bu].pedida+=r.cantPedida;
+    byBU[r.bu].lineas+=r.lineas;
+  });
+
+  var asOfLbl=DB_TR.asOf?new Date(DB_TR.asOf).toLocaleString('es-AR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}):'—';
+  var ingSource=(window.ING_DATA&&window.ING_DATA.length)?window.ING_DATA:(window.TR_ING_CACHE||null);
+
+  var kpis=mkStats([
+    {l:'Back Order (BO)',v:totBO.toLocaleString('es-AR'),s:bo.length+' pedidos sin liberar del cliente',cls:'cbad'},
+    {l:'% BO s/ transmisión',v:(totTransmision>0?Math.round(totBO/totTransmision*100):0)+'%',s:totTransmision.toLocaleString('es-AR')+' unid. transmitidas'},
+    {l:'Quiebre de stock',v:totQuiebre.toLocaleString('es-AR'),s:'unid. sin confirmar en pedidos cerrados del mes',cls:totQuiebre>0?'cwrn':'cok'},
+    {l:'Actualizado',v:asOfLbl,s:'foto del último Excel cargado'}
+  ]);
+
+  var dropCards=['FTW','APP','EQP'].map(function(bu){
+    var d=byBU[bu]||{pedida:0,lineas:0};
+    var real=d.lineas>0?d.pedida/d.lineas:0;
+    var marco=DB_TR.dropMarco[bu]||0;
+    var difPct=marco>0?Math.round((real-marco)/marco*100):0;
+    var color=difPct>=-5?'var(--green)':difPct>=-25?'var(--yellow)':'var(--red)';
+    return '<div class="sc" style="text-align:center">'+
+      '<div class="sc-l">DROP SIZE '+bu+'</div>'+
+      '<div class="sc-v" style="color:'+color+'">'+real.toFixed(1)+'</div>'+
+      '<div class="sc-s">marco: '+marco.toFixed(1)+' · <span style="color:'+color+';font-weight:700">'+(difPct>=0?'+':'')+difPct+'%</span></div>'+
+      '</div>';
+  }).join('');
+
+  var tablaRowsBO=trByEstadoTable(bo);
+  var tablaRowsPrep=trByEstadoTable(prep);
+
+  var html='<div style="padding:20px 0">'+
+    kpis+
+    '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:16px">'+dropCards+'</div>'+
+    '<div style="background:var(--panel);border:1px solid var(--border);border-radius:10px;margin-bottom:16px;overflow:hidden">'+
+      '<div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">'+
+        '<div style="font-size:13px;font-weight:700">Back Order (sin liberar por el cliente)</div>'+
+        '<button class="btn btn-o btn-xs" onclick="toggleTrMarcoEdit()">✏️ Editar Drop Marco Operativo</button>'+
+      '</div>'+
+      '<div id="trMarcoEditWrap" style="display:none;padding:12px 16px;border-bottom:1px solid var(--border)"></div>'+
+      trEstadoTableHead()+tablaRowsBO+'</tbody></table>'+
+    '</div>'+
+    '<div style="background:var(--panel);border:1px solid var(--border);border-radius:10px;margin-bottom:16px;overflow:hidden">'+
+      '<div style="padding:12px 16px;border-bottom:1px solid var(--border)">'+
+        '<div style="font-size:13px;font-weight:700">En preparación (ya liberado, en curso)</div>'+
+      '</div>'+
+      trEstadoTableHead()+tablaRowsPrep+'</tbody></table>'+
+    '</div>'+
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">'+
+      buildTrDailyTable('Transmisión diaria por BU — '+fmtMonth(CUR), '📤', trSoloMes(trByDateBU(rows,'cantPedida'),CUR), 'trTransTable')+
+      buildTrDailyTable('Ingresos reales diarios por BU — '+fmtMonth(CUR), '📥', ingSource?trSoloMes(ingByDateBU(ingSource),CUR):{}, 'trIngTable', !ingSource)+
+    '</div>'+
+    buildTrMeliBlock()+
+  '</div>';
+
+  document.getElementById('main').innerHTML=html;
+
+  if(!ingSource){
+    fetch(SB_URL+'/rest/v1/ingresos_data?select=fecha_llegada,bu,fisico&order=fecha_llegada.desc&limit=5000',{headers:SBH})
+      .then(function(r){return r.ok?r.json():[];})
+      .then(function(data){
+        window.TR_ING_CACHE=data||[];
+        if(MOD==='tr'&&PAGE==='tr-resumen')renderTrResumen();
+      }).catch(function(){});
+  }
+}
+
+// ── MELI Full: bultos y unidades procesados por día ───────────────────────────
+// "Procesado" = pedido cerrado (En zona de espera / Expedido completo), agrupado
+// por Fecha Jalado (día en que se cerró/controló). Unidades = Cant. Confirmada.
+// La foto de Transmisiones se reemplaza entera en cada carga, así que los pedidos
+// MELI cerrados se acumulan aparte (DB_TR.meli, clave = pedido) para que el mes no
+// pierda días cuando el export deja de traer pedidos viejos.
+function trEsMeli(cliente){return /meli/i.test(String(cliente||''));}
+function trMergeMeli(rows){
+  if(!DB_TR.meli)DB_TR.meli={};
+  var n=0;
+  rows.forEach(function(r){
+    if(!r.fechaJalado||!trEsMeli(r.cliente)||TR_CERRADO_ESTADOS.indexOf(r.estado)<0)return;
+    DB_TR.meli[r.pedido]={f:r.fechaJalado,u:r.cantConfirmada||0,b:r.bultos||0,p:r.cantPedida||0};
+    n++;
+  });
+  return n;
+}
+function trMeliByDay(mes){
+  var byDay={};
+  var m=DB_TR.meli||{};
+  Object.keys(m).forEach(function(ped){
+    var x=m[ped];
+    if(!x.f||x.f.indexOf(mes)!==0)return;
+    if(!byDay[x.f])byDay[x.f]={ped:0,u:0,b:0};
+    byDay[x.f].ped++;byDay[x.f].u+=x.u||0;byDay[x.f].b+=x.b||0;
+  });
+  return byDay;
+}
+function buildTrMeliBlock(){
+  var byDay=trMeliByDay(CUR);
+  var dates=Object.keys(byDay).sort();
+  var tot={ped:0,u:0,b:0};
+  dates.forEach(function(dk){tot.ped+=byDay[dk].ped;tot.u+=byDay[dk].u;tot.b+=byDay[dk].b;});
+  var hayCliente=DB_TR.rows.some(function(r){return r.cliente!==undefined;});
+  var enProc=DB_TR.rows.filter(function(r){return trEsMeli(r.cliente)&&TR_CERRADO_ESTADOS.indexOf(r.estado)<0&&r.estado!=='Cancelado internamente';});
+  var enProcU=enProc.reduce(function(s,r){return s+Math.max(0,r.cantPedida-r.cantConfirmada);},0);
+  var kpis=mkStats([
+    {l:'MELI unidades del mes',v:tot.u.toLocaleString('es-AR'),s:fmtMonth(CUR)},
+    {l:'MELI bultos del mes',v:tot.b.toLocaleString('es-AR'),s:(tot.b>0?(tot.u/tot.b).toFixed(1):'—')+' unid. por bulto'},
+    {l:'Pedidos cerrados',v:tot.ped.toLocaleString('es-AR'),s:dates.length+' días con actividad'},
+    {l:'Promedio por día',v:dates.length?Math.round(tot.u/dates.length).toLocaleString('es-AR'):'—',s:dates.length?Math.round(tot.b/dates.length).toLocaleString('es-AR')+' bultos por día':''},
+    {l:'MELI en proceso',v:hayCliente?enProcU.toLocaleString('es-AR'):'—',s:hayCliente?(enProc.length+' pedidos sin cerrar (unid. pendientes)'):'se activa al volver a cargar el Excel',cls:enProc.length?'cwrn':''}
+  ]);
+  var rowsHtml=dates.slice().reverse().map(function(dk){
+    var d=byDay[dk];
+    var fp=dk.split('-');
+    var lbl=(+fp[2])+'/'+(+fp[1])+'/'+fp[0];
+    return '<tr style="border-bottom:1px solid #0d1a2a">'+
+      '<td style="padding:7px 14px;font-weight:600">'+lbl+'</td>'+
+      '<td style="padding:7px 14px;color:var(--muted2)">'+d.ped.toLocaleString('es-AR')+'</td>'+
+      '<td style="padding:7px 14px;font-weight:700">'+d.u.toLocaleString('es-AR')+'</td>'+
+      '<td style="padding:7px 14px;font-weight:700">'+d.b.toLocaleString('es-AR')+'</td>'+
+      '<td style="padding:7px 14px;color:var(--muted2)">'+(d.b>0?(d.u/d.b).toFixed(1):'—')+'</td>'+
+    '</tr>';
+  }).join('');
+  var totRow=dates.length?('<tr style="border-top:2px solid var(--border);background:var(--panel2)">'+
+      '<td style="padding:9px 14px;font-weight:800">Total '+fmtMonth(CUR)+'</td>'+
+      '<td style="padding:9px 14px;font-weight:800">'+tot.ped.toLocaleString('es-AR')+'</td>'+
+      '<td style="padding:9px 14px;font-weight:800">'+tot.u.toLocaleString('es-AR')+'</td>'+
+      '<td style="padding:9px 14px;font-weight:800">'+tot.b.toLocaleString('es-AR')+'</td>'+
+      '<td style="padding:9px 14px;font-weight:800">'+(tot.b>0?(tot.u/tot.b).toFixed(1):'—')+'</td></tr>'):'';
+  var body=dates.length?('<div style="max-height:420px;overflow-y:auto"><table style="width:100%;border-collapse:collapse" id="trMeliTable">'+
+      '<thead style="position:sticky;top:0;background:var(--panel)"><tr>'+
+      ['Día de cierre','Pedidos','Unidades','Bultos','Unid. por bulto'].map(function(h){
+        return '<th style="padding:7px 14px;text-align:left;font-size:10px;color:var(--muted2);text-transform:uppercase;border-bottom:1px solid var(--border)">'+h+'</th>';
+      }).join('')+'</tr></thead><tbody>'+rowsHtml+totRow+'</tbody></table></div>')
+    :'<div style="padding:30px;text-align:center;color:var(--muted2);font-size:12px">'+(hayCliente?'Sin pedidos MELI cerrados en '+fmtMonth(CUR):'Volvé a cargar el Excel de pedidos para activar este bloque')+'</div>';
+  return '<div style="margin-top:16px">'+kpis+
+    '<div style="background:var(--panel);border:1px solid var(--border);border-radius:10px;overflow:hidden">'+
+      '<div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">'+
+        '<div style="font-size:13px;font-weight:700">🟡 MELI Full — procesado por día — '+fmtMonth(CUR)+'</div>'+
+        '<div style="font-size:10px;color:var(--muted2)">Pedidos cerrados (zona de espera / expedido) por día de cierre · se acumula entre cargas</div>'+
+      '</div>'+body+
+    '</div></div>';
+}
+
+// Agrupa filas de Transmisiones por Fecha Agregado + BU, sumando el campo indicado
+function trByDateBU(rows,field){
+  var byDate={};
+  rows.forEach(function(r){
+    if(!byDate[r.fechaAgregado])byDate[r.fechaAgregado]={FTW:0,APP:0,EQP:0};
+    if(byDate[r.fechaAgregado][r.bu]!==undefined)byDate[r.fechaAgregado][r.bu]+=(r[field]||0);
+  });
+  return byDate;
+}
+// Agrupa filas de ingresos_data (fecha_llegada + bu) sumando Físico — mismo criterio
+// que el cuadro "INGRESOS REALES" de la hoja Resumen inbound del archivo Dropsize.
+function ingByDateBU(rows){
+  var byDate={};
+  rows.forEach(function(r){
+    if(!r.fecha_llegada)return;
+    var dk=String(r.fecha_llegada).slice(0,10);
+    if(!byDate[dk])byDate[dk]={FTW:0,APP:0,EQP:0};
+    var bu=(r.bu||'').toUpperCase();
+    if(byDate[dk][bu]!==undefined)byDate[dk][bu]+=(r.fisico||0);
+  });
+  return byDate;
+}
+// Filtra un {dk:{...}} a solo las fechas del mes CUR ('YYYY-MM'), igual criterio
+// que usa el resto del dashboard (Mesa de Control, Picking, etc.) con el selector
+// de mes del header — así estas tablas no mezclan meses distintos.
+function trSoloMes(byDateBU,mes){
+  var out={};
+  Object.keys(byDateBU).forEach(function(dk){if(dk.indexOf(mes)===0)out[dk]=byDateBU[dk];});
+  return out;
+}
+// Tabla Fecha | FTW | APP | EQP | Total, más reciente arriba, con scroll interno.
+function buildTrDailyTable(titulo,icon,byDateBU,domId,loading){
+  var dates=Object.keys(byDateBU).sort().reverse();
+  var rowsHtml=dates.map(function(dk){
+    var d=byDateBU[dk];
+    var total=(d.FTW||0)+(d.APP||0)+(d.EQP||0);
+    var fp=dk.split('-');
+    var lbl=fp.length===3?(+fp[2])+'/'+(+fp[1])+'/'+fp[0]:dk;
+    return '<tr style="border-bottom:1px solid #0d1a2a">'+
+      '<td style="padding:7px 14px;font-weight:600">'+lbl+'</td>'+
+      '<td style="padding:7px 14px;color:var(--muted2)">'+(d.FTW||0).toLocaleString('es-AR')+'</td>'+
+      '<td style="padding:7px 14px;color:var(--muted2)">'+(d.APP||0).toLocaleString('es-AR')+'</td>'+
+      '<td style="padding:7px 14px;color:var(--muted2)">'+(d.EQP||0).toLocaleString('es-AR')+'</td>'+
+      '<td style="padding:7px 14px;font-weight:700">'+total.toLocaleString('es-AR')+'</td>'+
+    '</tr>';
+  }).join('');
+  var body=loading?'<div style="padding:30px;text-align:center;color:var(--muted2);font-size:12px">Cargando…</div>'
+    :(dates.length?('<div style="max-height:420px;overflow-y:auto">'+
+      '<table style="width:100%;border-collapse:collapse" id="'+domId+'">'+
+      '<thead style="position:sticky;top:0;background:var(--panel)"><tr>'+
+        ['Fecha','FTW','APP','EQP','Total'].map(function(h){
+          return '<th style="padding:7px 14px;text-align:left;font-size:10px;color:var(--muted2);text-transform:uppercase;border-bottom:1px solid var(--border)">'+h+'</th>';
+        }).join('')+
+      '</tr></thead><tbody>'+rowsHtml+'</tbody></table></div>')
+      :'<div style="padding:30px;text-align:center;color:var(--muted2);font-size:12px">Sin datos</div>');
+  return '<div style="background:var(--panel);border:1px solid var(--border);border-radius:10px;overflow:hidden">'+
+    '<div style="padding:12px 16px;border-bottom:1px solid var(--border);font-size:13px;font-weight:700">'+icon+' '+titulo+'</div>'+
+    body+
+  '</div>';
+}
+
+function toggleTrMarcoEdit(){
+  var w=document.getElementById('trMarcoEditWrap');
+  if(!w)return;
+  if(w.style.display==='none'){w.style.display='block';w.innerHTML=buildTrMarcoEditTable();}
+  else w.style.display='none';
+}
+function buildTrMarcoEditTable(){
+  var html='<div style="display:flex;gap:16px;align-items:flex-end;flex-wrap:wrap">';
+  ['FTW','APP','EQP'].forEach(function(bu){
+    html+='<div><label style="display:block;font-size:10px;color:var(--muted2);font-weight:700;margin-bottom:4px">MARCO '+bu+'</label>'+
+      '<input type="number" step="0.1" id="trMarco'+bu+'" value="'+(DB_TR.dropMarco[bu]||0)+'" style="width:80px;background:var(--panel2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:6px 8px;font-size:12px;font-family:inherit"></div>';
+  });
+  html+='<button class="btn btn-p btn-xs" onclick="saveTrMarco()">Guardar</button></div>';
+  return html;
+}
+function saveTrMarco(){
+  ['FTW','APP','EQP'].forEach(function(bu){
+    var el=document.getElementById('trMarco'+bu);
+    if(el)DB_TR.dropMarco[bu]=parseFloat(el.value)||0;
+  });
+  ldr(1,'Guardando...');
+  sbSaveTr().then(function(ok){
+    toast(ok?'✓ Marco operativo actualizado':'Error al guardar',ok?'ok':'err');
+    renderTrResumen();
+    ldr(0);
+  });
+}
+
 
 </script>
 </body>
